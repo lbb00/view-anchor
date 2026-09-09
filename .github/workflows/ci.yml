@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# A newer push to the same ref supersedes the running verification — cancel it
+# instead of finishing a result nobody will read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Check types
+        run: pnpm run check-types
+
+      - name: Test
+        run: pnpm run test
+
+      # `build` also regenerates the inlined core inside docs/index.html;
+      # a dirty tree here means the committed demo drifted from src.
+      - name: Build
+        run: pnpm run build
+
+      - name: Fail if the generated docs demo is stale
+        run: git diff --exit-code -- docs

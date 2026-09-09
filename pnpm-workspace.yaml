@@ -1,0 +1,7 @@
+# pnpm 12 refuses to run a dependency's install script unless it is listed here,
+# and fails the whole install (ERR_PNPM_IGNORED_BUILDS) when an unlisted one has
+# a script — so every such dependency needs an explicit decision.
+allowBuilds:
+  # postinstall links/downloads the platform esbuild binary; `pnpm build:docs`
+  # bundles the core with esbuild and does not work without it.
+  esbuild: true

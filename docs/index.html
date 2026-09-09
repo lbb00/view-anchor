@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>view-anchor — 3D live demo: keep a native view glued to a DOM element</title>
+<meta name="description" content="view-anchor keeps an Electron WebContentsView glued to a DOM element's geometry. The 3D demo below runs the real core in your browser.">
+<style>
+  :root {
+    --bg:               hsl(  0  0%   7%);
+    --bg-soft:          hsl(  0  0%  11%);
+    --text:             hsl(  0  0%  95%);
+    --text-2:           hsl(  0  0%  68%);
+    --text-3:           hsl(  0  0%  48%);
+
+    --renderer:         hsl(220  16%  16%);
+    --renderer-bd:      hsl(220  22%  56%);
+    --placeholder:      hsl(249 100%  67% / 0.18);
+    --placeholder-bd:   hsl(249 100%  72%);
+    --native:           hsl(160  40%  16%);
+    --native-bd:        hsl(160  72%  58%);
+    --wire:             hsl(160  72%  60%);
+    --accent:           hsl(249 100%  70%);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: radial-gradient(120% 120% at 50% 0%, hsl(0 0% 10%) 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 56px; }
+  header h1 { font-size: 19px; font-weight: 600; margin: 0 0 4px; letter-spacing: 0.01em; }
+  header p { margin: 0; color: var(--text-2); font-size: 13.5px; max-width: 72ch; }
+
+  .stage-shell {
+    margin-top: 26px;
+    background: var(--bg-soft);
+    border: 1px solid hsl(0 0% 18%);
+    border-radius: 16px;
+    padding: 30px 24px 20px;
+    box-shadow: 0 24px 60px hsl(0 0% 0% / 0.45);
+  }
+
+  /* ---- 3D scene ---- */
+  .scene {
+    position: relative;
+    height: 380px;
+    perspective: 1500px;
+    perspective-origin: 50% 34%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* the deck tilts as a whole on "explode" — both the DOM window and the
+     native view ride it, so they stay in registration in the 3D side view. */
+  .deck {
+    position: relative;
+    width: 560px; height: 300px;
+    transform-style: preserve-3d;
+    transition: transform 900ms cubic-bezier(0.6, 0, 0.2, 1);
+  }
+  .scene.exploded .deck { transform: rotateX(56deg) rotateZ(-30deg); }
+
+  /* bottom layer: renderer / DOM window (web content). Stays flat within the
+     deck (translateZ 0); view-anchor measures the placeholder inside it. */
+  .window {
+    position: absolute; inset: 0;
+    background: var(--renderer);
+    border: 1.5px solid var(--renderer-bd);
+    border-radius: 10px;
+    box-shadow: 0 22px 50px hsl(0 0% 0% / 0.5);
+    transform: translateZ(0);
+  }
+  .window .caption {
+    position: absolute; left: 14px; top: 34px;
+    font-size: 11.5px; letter-spacing: 0.03em; color: var(--text-2); pointer-events: none;
+  }
+  .window .caption b { color: var(--text); font-weight: 600; }
+
+  .chrome-bar {
+    position: absolute; left: 0; right: 0; top: 0; height: 26px;
+    background: hsl(0 0% 10%); border-bottom: 1px solid hsl(0 0% 22%);
+    border-radius: 10px 10px 0 0;
+  }
+  .traffic {
+    position: absolute; left: 12px; top: 9px; width: 42px; height: 8px;
+    background:
+      radial-gradient(circle, hsl(0 70% 60%) 0 3.4px, transparent 3.8px) 0 0/14px 8px no-repeat,
+      radial-gradient(circle, hsl(45 80% 55%) 0 3.4px, transparent 3.8px) 14px 0/14px 8px no-repeat,
+      radial-gradient(circle, hsl(135 50% 55%) 0 3.4px, transparent 3.8px) 28px 0/14px 8px no-repeat;
+  }
+
+  .dom-area { position: absolute; left: 10px; right: 10px; top: 56px; bottom: 12px; display: flex; gap: 8px; }
+  .dom-sidebar {
+    flex: 1 1 auto; min-width: 64px;
+    background: hsl(0 0% 14%); border: 1px solid hsl(0 0% 22%); border-radius: 6px;
+    display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  }
+  .dom-sidebar i { display: block; height: 9px; border-radius: 3px; background: hsl(0 0% 24%); }
+  .dom-sidebar i:nth-child(2) { width: 80%; } .dom-sidebar i:nth-child(3){ width: 60%; }
+  .dom-sidebar i:nth-child(4) { width: 72%; } .dom-sidebar i:nth-child(5){ width: 45%; }
+
+  .placeholder {
+    flex: 0 0 58%;
+    position: relative;
+    border-radius: 6px;
+    background: var(--placeholder);
+    border: 1.5px dashed var(--placeholder-bd);
+    display: flex; align-items: center; justify-content: center;
+    /* no transition: track the slider 1:1 so the anchored view stays glued */
+  }
+  .placeholder .ph-tag { font-size: 11px; color: var(--placeholder-bd); text-align: center; padding: 0 8px; }
+  .placeholder .ph-tag small { color: var(--text-3); display:block; margin-top:2px; font-size:10px; }
+
+  /* top layer: native WebContentsView. A direct child of the deck so it lives
+     in the same 3D space; lifted in Z on explode to float above the DOM. */
+  .follower {
+    position: absolute;
+    border-radius: 6px;
+    background: linear-gradient(180deg, hsl(160 40% 20%), hsl(160 38% 13%));
+    border: 1.5px solid var(--native-bd);
+    box-shadow: 0 0 0 1px hsl(160 72% 60% / 0.25), inset 0 0 24px hsl(160 72% 50% / 0.12);
+    /* position/size snap each frame (like a real setBounds) — only the
+       explode lift + collapse fade animate; otherwise tracking rubber-bands. */
+    transition: transform 900ms cubic-bezier(0.6,0,0.2,1), box-shadow 900ms, opacity 300ms;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    transform: translateZ(0.5px);
+  }
+  .follower .nv-label { font-size: 11px; color: var(--native-bd); letter-spacing: 0.02em; text-align:center; }
+  .follower .nv-label small { display:block; color: hsl(160 30% 62%); font-size:10px; margin-top:2px; }
+  .follower .row-marker {
+    position:absolute; left:0; right:0; top:0; height:18px; background: hsl(160 30% 22% / 0.55);
+    border-bottom:1px solid hsl(160 50% 40% / 0.4);
+  }
+  .scene.exploded .follower {
+    transform: translateZ(120px);
+    box-shadow: 0 0 0 1px hsl(160 72% 60% / 0.4), 0 30px 60px hsl(0 0% 0% / 0.55),
+                0 0 44px hsl(160 72% 50% / 0.22);
+  }
+  .follower.collapsed { opacity: 0 !important; }
+
+  /* connector pillar standing along Z from the placeholder up to the view */
+  .pillar {
+    position: absolute; width: 0;
+    border-left: 1.5px dashed var(--native-bd);
+    transform-origin: top center;
+    transform: rotateX(-90deg);
+    opacity: 0; transition: opacity 400ms ease;
+    pointer-events: none;
+  }
+  .scene.exploded .pillar { opacity: 0.5; }
+
+  /* ---- controls ---- */
+  .controls {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+    margin-top: 22px; padding-top: 18px; border-top: 1px solid hsl(0 0% 17%);
+  }
+  .ctl { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--text-2); }
+  .ctl label { user-select: none; }
+
+  .switch { position: relative; width: 42px; height: 24px; flex: none; }
+  .switch input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .switch .track { position: absolute; inset: 0; border-radius: 999px; background: hsl(0 0% 24%); transition: background 200ms ease; pointer-events: none; }
+  .switch .thumb { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: hsl(0 0% 92%); transition: transform 200ms ease; pointer-events: none; }
+  .switch input:checked ~ .track { background: var(--accent); }
+  .switch input:checked ~ .thumb { transform: translateX(18px); }
+
+  input[type=range] { accent-color: var(--accent); width: 150px; }
+
+  .readout {
+    margin-left: auto;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--wire);
+    background: hsl(160 40% 12% / 0.5); border: 1px solid hsl(160 50% 40% / 0.35);
+    border-radius: 8px; padding: 8px 12px; min-width: 232px; text-align: center;
+  }
+  .readout .k { color: var(--text-3); }
+
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 18px; font-size: 12px; color: var(--text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .sw { width: 13px; height: 13px; border-radius: 3px; flex: none; }
+  .sw.r { background: var(--renderer); border: 1.5px solid var(--renderer-bd); }
+  .sw.p { background: var(--placeholder); border: 1.5px dashed var(--placeholder-bd); }
+  .sw.n { background: var(--native); border: 1.5px solid var(--native-bd); }
+
+  footer.note { margin-top: 22px; color: var(--text-3); font-size: 12px; line-height: 1.6; }
+  footer.note code { color: var(--text-2); }
+
+  /* ---- landing intro ---- */
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+  .badges img { display: block; }
+  .tag-en { color: var(--text-2); font-size: 14.5px; margin: 10px 0 0; max-width: 72ch; }
+  .actions { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; }
+  .actions a { color: var(--placeholder-bd); text-decoration: none; border-bottom: 1px solid hsl(249 100% 72% / 0.3); }
+  .actions a:hover { color: var(--text); border-bottom-color: var(--text-2); }
+  footer.note { display: flex; flex-direction: column; gap: 10px; }
+  footer.note .hint { color: var(--text-3); font-size: 12.5px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="badges">
+      <img alt="npm version" src="https://img.shields.io/npm/v/view-anchor">
+      <img alt="npm downloads" src="https://img.shields.io/npm/dm/view-anchor">
+      <img alt="License" src="https://img.shields.io/npm/l/view-anchor">
+      <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D24-339933">
+    </div>
+    <h1>view-anchor — keep a native view glued to a DOM element</h1>
+    <p class="tag-en">A native <b style="color:var(--native-bd)">WebContentsView</b> stays glued to a DOM element's rectangle — measured in the renderer, applied wherever your host needs it. Resize the splitter, toggle <code>present</code>, or explode the deck below: the green view is driven by the real view-anchor core running in this page.</p>
+    <div class="actions">
+      <a href="https://github.com/lbb00/view-anchor">GitHub</a>
+      <a href="https://www.npmjs.com/package/view-anchor">npm</a>
+      <a href="https://github.com/lbb00/view-anchor/blob/main/README.md">README</a>
+    </div>
+  </header>
+
+<div class="stage-shell">
+    <div class="scene" id="scene">
+      <div class="deck" id="deck">
+        <!-- bottom layer: the renderer / DOM window -->
+        <div class="window">
+          <div class="chrome-bar"><div class="traffic"></div></div>
+          <div class="caption"><b>Renderer DOM</b></div>
+          <div class="dom-area">
+            <div class="dom-sidebar"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="placeholder" id="placeholder">
+              <div class="ph-tag">&lt;div ref={anchorRef} /&gt;</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- connector pillar: from the placeholder up to the native view along Z -->
+        <div class="pillar" id="pillar"></div>
+
+        <!-- top layer: the native WebContentsView, driven by view-anchor -->
+        <div class="follower" id="follower">
+          <div class="row-marker"></div>
+          <div class="nv-label">WebContentsView</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="ctl">
+        <span class="switch">
+          <input type="checkbox" id="present" checked>
+          <span class="track"></span><span class="thumb"></span>
+        </span>
+        <label for="present"><code>present</code></label>
+      </div>
+      <div class="ctl">
+        <label for="split">Split</label>
+        <input type="range" id="split" min="34" max="78" value="58">
+      </div>
+      <div class="ctl">
+        <span class="switch">
+          <input type="checkbox" id="explode" checked>
+          <span class="track"></span><span class="thumb"></span>
+        </span>
+        <label for="explode">Explode</label>
+      </div>
+      <div class="readout" id="readout"></div>
+    </div>
+
+    <div class="legend">
+      <span><span class="sw r"></span> DOM window</span>
+      <span><span class="sw p"></span> Placeholder div</span>
+      <span><span class="sw n"></span> WebContentsView</span>
+    </div>
+  </div>
+
+  <footer class="note">
+    <div class="actions">
+      <a href="https://github.com/lbb00/view-anchor">GitHub repository</a>
+      <a href="https://www.npmjs.com/package/view-anchor">npm · view-anchor</a>
+      <span style="color:var(--text-3)">MIT licensed</span>
+    </div>
+    <div class="hint">Drag <code>Split</code> to resize the placeholder, toggle <code>present</code> to collapse/restore, and open <code>Explode</code> for the 3D relationship — the green view's position and size come entirely from view-anchor's <code>publish</code>, the same path a real Electron host uses with IPC → setBounds.</div>
+  </footer>
+
+</div>
+
+<!-- Bootstrapped from src/view-anchor.ts by `pnpm build:docs` and inlined here
+     as an esbuild IIFE — this block is GENERATED, do not hand-edit. Inlined
+     rather than imported so the page can open from file://, where browsers
+     block cross-origin ES module imports. -->
+<script>
+/* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts by `pnpm build:docs`; do not edit */
+"use strict";
+var __viewAnchorCore = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // src/view-anchor.ts
+  var view_anchor_exports = {};
+  __export(view_anchor_exports, {
+    createPlacementAnchor: () => createPlacementAnchor,
+    createViewAnchor: () => createViewAnchor,
+    measurePlacement: () => measurePlacement
+  });
+  var ZERO = { x: 0, y: 0, width: 0, height: 0 };
+  var clampRect = (r) => ({
+    x: Math.round(r.x),
+    y: Math.round(r.y),
+    width: Math.max(0, Math.round(r.width)),
+    height: Math.max(0, Math.round(r.height))
+  });
+  function createViewAnchor(target, opts) {
+    let present = opts.present;
+    let publish = opts.publish;
+    let observer = null;
+    let lastPublished = null;
+    let disposed = false;
+    const measure = () => {
+      const r = target.getBoundingClientRect();
+      return clampRect({ x: r.left, y: r.top, width: r.width, height: r.height });
+    };
+    const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+    const emit = () => {
+      if (disposed || !present) return;
+      const m = measure();
+      if (lastPublished && sameRect(lastPublished, m)) return;
+      lastPublished = m;
+      publish(m);
+    };
+    const startObserving = () => {
+      if (observer) return;
+      observer = new ResizeObserver(emit);
+      observer.observe(target);
+      window.addEventListener("resize", emit);
+    };
+    const stopObserving = () => {
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+      window.removeEventListener("resize", emit);
+    };
+    const apply = () => {
+      lastPublished = null;
+      if (present) {
+        startObserving();
+        lastPublished = measure();
+        publish(lastPublished);
+      } else {
+        stopObserving();
+        publish(ZERO);
+      }
+    };
+    apply();
+    return {
+      update(next) {
+        if (disposed) return;
+        publish = next.publish;
+        present = next.present;
+        apply();
+      },
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        stopObserving();
+      }
+    };
+  }
+  function measurePlacement(target) {
+    const r = target.getBoundingClientRect();
+    return {
+      visible: true,
+      bounds: clampRect({ x: r.left, y: r.top, width: r.width, height: r.height })
+    };
+  }
+  var samePlacement = (a, b) => {
+    if (a.visible !== b.visible) return false;
+    if (a.visible && b.visible) {
+      return a.bounds.x === b.bounds.x && a.bounds.y === b.bounds.y && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
+    }
+    return true;
+  };
+  function createPlacementAnchor(target, opts) {
+    let visible = opts.visible;
+    let publish = opts.publish;
+    const guardDisplayNone = opts.guardDisplayNone ?? false;
+    const followScroll = opts.followScroll ?? false;
+    const followGeometry = opts.followGeometry ?? false;
+    let observer = null;
+    let io = null;
+    let lastPublished = null;
+    let disposed = false;
+    let rafId = null;
+    let steadyFrames = 0;
+    const STEADY_CLOSE_FRAMES = 2;
+    const MAX_HIDDEN_FOLLOW_FRAMES = 30;
+    let pointerHeld = false;
+    let sentinelDeadline = null;
+    const computePlacement = () => {
+      const p = measurePlacement(target);
+      if (guardDisplayNone && p.visible && (p.bounds.width === 0 || p.bounds.height === 0)) {
+        return { visible: false };
+      }
+      return p;
+    };
+    const emit = () => {
+      if (disposed || !visible) return;
+      const p = computePlacement();
+      if (lastPublished && samePlacement(lastPublished, p)) return;
+      lastPublished = p;
+      publish(p);
+    };
+    const shouldCloseOnHiddenPoll = () => {
+      if (lastPublished?.visible === false) return true;
+      return steadyFrames++ >= MAX_HIDDEN_FOLLOW_FRAMES;
+    };
+    const sentinelFrame = () => {
+      rafId = null;
+      if (disposed || !visible) {
+        sentinelDeadline = null;
+        return;
+      }
+      if (sentinelDeadline !== null && performance.now() >= sentinelDeadline) {
+        sentinelDeadline = null;
+        return;
+      }
+      const p = computePlacement();
+      if (!p.visible) {
+        if (shouldCloseOnHiddenPoll()) {
+          sentinelDeadline = null;
+          return;
+        }
+        rafId = requestAnimationFrame(sentinelFrame);
+        return;
+      }
+      if (lastPublished && samePlacement(lastPublished, p)) {
+        steadyFrames++;
+        if (steadyFrames >= STEADY_CLOSE_FRAMES && !pointerHeld) {
+          sentinelDeadline = null;
+          return;
+        }
+      } else {
+        lastPublished = p;
+        publish(p);
+        steadyFrames = 0;
+      }
+      if (!disposed && visible) {
+        rafId = requestAnimationFrame(sentinelFrame);
+      } else {
+        sentinelDeadline = null;
+      }
+    };
+    const openSentinel = () => {
+      if (!followGeometry || disposed) return;
+      steadyFrames = 0;
+      if (rafId === null) rafId = requestAnimationFrame(sentinelFrame);
+    };
+    const closeSentinel = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      steadyFrames = 0;
+      sentinelDeadline = null;
+      pointerHeld = false;
+    };
+    const onScroll = () => {
+      if (followGeometry) openSentinel();
+      else emit();
+    };
+    const onPointerDown = (e) => {
+      const t = e.target;
+      if (t && t.closest && t.closest('[role="separator"]')) {
+        pointerHeld = true;
+        openSentinel();
+      }
+    };
+    const onPointerUp = () => {
+      if (!pointerHeld) return;
+      pointerHeld = false;
+      openSentinel();
+    };
+    const startObserving = () => {
+      if (observer) return;
+      observer = new ResizeObserver(emit);
+      observer.observe(target);
+      window.addEventListener("resize", emit);
+      if (guardDisplayNone && typeof IntersectionObserver !== "undefined") {
+        io = new IntersectionObserver(emit);
+        io.observe(target);
+      }
+      if (followScroll) {
+        window.addEventListener("scroll", onScroll, {
+          capture: true,
+          passive: true
+        });
+      }
+      if (followGeometry) {
+        window.addEventListener("pointerdown", onPointerDown, { capture: true });
+        window.addEventListener("pointerup", onPointerUp, { capture: true });
+      }
+    };
+    const stopObserving = () => {
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+      if (io) {
+        io.disconnect();
+        io = null;
+      }
+      window.removeEventListener("resize", emit);
+      window.removeEventListener("scroll", onScroll, {
+        capture: true
+      });
+      window.removeEventListener("pointerdown", onPointerDown, {
+        capture: true
+      });
+      window.removeEventListener("pointerup", onPointerUp, {
+        capture: true
+      });
+      closeSentinel();
+    };
+    const apply = () => {
+      lastPublished = null;
+      if (visible) {
+        startObserving();
+        lastPublished = computePlacement();
+        publish(lastPublished);
+      } else {
+        stopObserving();
+        const hidden = { visible: false };
+        lastPublished = hidden;
+        publish(hidden);
+      }
+    };
+    apply();
+    return {
+      update(next) {
+        if (disposed) return;
+        publish = next.publish;
+        visible = next.visible;
+        apply();
+      },
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        stopObserving();
+      },
+      pulse(durationMs) {
+        if (disposed || !followGeometry) return;
+        if (durationMs !== void 0 && durationMs > 0) {
+          const next = performance.now() + durationMs;
+          sentinelDeadline = sentinelDeadline === null ? next : Math.max(sentinelDeadline, next);
+        }
+        openSentinel();
+      }
+    };
+  }
+  return __toCommonJS(view_anchor_exports);
+})();
+/* __VIEW_ANCHOR_CORE_END__ */
+</script>
+
+<script>
+  const { createViewAnchor } = __viewAnchorCore
+
+  const ZERO = { x: 0, y: 0, width: 0, height: 0 }
+
+  const deck        = document.getElementById('deck')
+  const placeholder = document.getElementById('placeholder')
+  const follower    = document.getElementById('follower')
+  const pillar      = document.getElementById('pillar')
+  const presentEl   = document.getElementById('present')
+  const splitEl     = document.getElementById('split')
+  const explodeEl   = document.getElementById('explode')
+  const scene       = document.getElementById('scene')
+  const readout     = document.getElementById('readout')
+
+  // The placeholder's rect inside the deck (accumulated along the offsetParent
+  // chain, independent of the 3D transform) — flat or tilted, the native view
+  // stays registered directly above the placeholder.
+  function deckLocalRect(el) {
+    let x = 0, y = 0, n = el
+    while (n && n !== deck) { x += n.offsetLeft; y += n.offsetTop; n = n.offsetParent }
+    return { x, y, width: el.offsetWidth, height: el.offsetHeight }
+  }
+
+  // The host-side publish — view-anchor hands it the measured rect. A real app
+  // would go IPC → WebContentsView.setBounds; here we place the view in the
+  // deck's local coordinates.
+  function publish(bounds) {
+    if (bounds.width === 0 || bounds.height === 0) {
+      follower.classList.add('collapsed')
+      renderReadout(ZERO, false)
+      return
+    }
+    follower.classList.remove('collapsed')
+    const r = deckLocalRect(placeholder)
+    follower.style.left   = r.x + 'px'
+    follower.style.top    = r.y + 'px'
+    follower.style.width  = r.width + 'px'
+    follower.style.height = r.height + 'px'
+    // Pillar stands on the placeholder's centerline, rising along Z to the
+    // view's height (120px).
+    pillar.style.left = (r.x + r.width / 2) + 'px'
+    pillar.style.top  = (r.y + r.height / 2) + 'px'
+    pillar.style.height = '120px'
+    renderReadout(r, true)
+  }
+
+  function renderReadout(b, present) {
+    readout.innerHTML =
+      '<span class="k">publish</span>({ x:' + b.x + ', y:' + b.y +
+      ', w:' + b.width + ', h:' + b.height + ' })' +
+      (present ? '' : '  <span class="k">// detached</span>')
+  }
+
+  // Start the real anchor; split resizes are driven by view-anchor's own ResizeObserver.
+  const handle = createViewAnchor(placeholder, { present: presentEl.checked, publish })
+
+  presentEl.addEventListener('change', () => {
+    handle.update({ present: presentEl.checked, publish })
+  })
+  splitEl.addEventListener('input', () => {
+    placeholder.style.flexBasis = splitEl.value + '%'
+  })
+  // Explode defaults ON: apply the exploded pose at boot — uncheck to see the flat view.
+  if (explodeEl.checked) scene.classList.add('exploded')
+
+  explodeEl.addEventListener('change', () => {
+    scene.classList.toggle('exploded', explodeEl.checked)
+  })
+</script>
+</body>
+</html>

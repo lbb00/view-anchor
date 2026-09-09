@@ -1,0 +1,58 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# No paths: filter on purpose. This repo keeps a single amended commit that is
+# force-pushed, and GitHub's push-event path filtering computes changes against
+# the replaced ref, so docs-only pushes were missed (Pages silently not
+# deploying). Deploying on every main push is cheap (~30s) and reliable.
+
+# The Pages deployment must be serialized: two concurrent deploys of the same
+# environment race on the release state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      # Regenerate the inlined core inside docs/index.html so the deployed
+      # demo always matches src at this commit.
+      - name: Build demo
+        run: pnpm run build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
