@@ -1,4 +1,6 @@
-# view-anchor
+<p align="center">
+  <img src="https://raw.githubusercontent.com/lbb00/view-anchor/main/assets/banner.svg" alt="view-anchor — 让 DOM 之外的画面贴合 DOM 元素" width="820">
+</p>
 
 > 高性能几何桥接库，让任何"不在 DOM 里的东西"始终贴合某个 DOM 元素：Electron 的 `WebContentsView`、其他桌面壳里的原生 webview、跨域 iframe，或者任何你能用一个矩形来定位的画面。每次移动和缩放都同步发布、不会重复发帧，整个包 gzip 后约 2.6 KB。
 
@@ -184,7 +186,7 @@ if (decoded.ok) { /* 先校验发送方，再只应用更新的消息 */ }
 
 ## 文档
 
-- [docs/mechanism.mdx](./docs/mechanism.mdx)：正向方向的原理。同步发布、防止过期帧、`present` / 零矩形 / 卸载的约定、StrictMode 下的行为。内含 [docs/index.html](./docs/index.html) 的 3D 交互演示。
+- [docs/mechanism.md](./docs/mechanism.md)：正向方向的原理。同步发布、防止过期帧、`present` / 零矩形 / 卸载的约定、StrictMode 下的行为。内含 [docs/index.html](./docs/index.html) 的 3D 交互演示。
 - [docs/bidirectional-design.md](./docs/bidirectional-design.md)：两个方向同时运行时的设计。为什么正向是同步的而反向走动画帧、单轴归属，以及信任边界在哪。
 - [docs/protocol.md](./docs/protocol.md)：消息信封、校验、排序、批处理，以及失败时会发生什么。
 - [docs/performance-report.md](./docs/performance-report.md)：可复现的 CPU、堆、RSS、极端场景、V8 和导出体积测量。
