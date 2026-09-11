@@ -114,12 +114,7 @@ function el(): HTMLElement {
   return document.createElement('div')
 }
 
-// ── update() re-advertises the current value to the new sink ──────────────
-// Bug it catches: an update() that only swaps the sink (without
-// `emitNow(produce())`) leaves the new channel sizeless until the next RO
-// tick — the documented mirror of the forward anchor's re-publish on update.
-
-describe('createSizeAdvertiser — update() re-advertises current value', () => {
+describe('createSizeAdvertiser: update() re-advertises current value', () => {
   it('emits the current size to the new sink immediately, without a fresh RO tick', () => {
     const first = vi.fn<(s: AdvertisedSize) => void>()
     const second = vi.fn<(s: AdvertisedSize) => void>()
@@ -148,11 +143,7 @@ describe('createSizeAdvertiser — update() re-advertises current value', () => 
   })
 })
 
-// ── update() with no size yet does not emit ───────────────────────────────
-// Bug it catches: an update() that emits unconditionally (e.g. `emitNow` with a
-// stale/zero default) sends a bogus frame before any real measurement exists.
-
-describe('createSizeAdvertiser — update() before any size', () => {
+describe('createSizeAdvertiser: update() before any size', () => {
   it('does not call the new sink when no RO frame has produced a size yet', () => {
     const first = vi.fn<(s: AdvertisedSize) => void>()
     const second = vi.fn<(s: AdvertisedSize) => void>()
@@ -164,12 +155,7 @@ describe('createSizeAdvertiser — update() before any size', () => {
   })
 })
 
-// ── border-box absent → fall back to content-box ──────────────────────────
-// Bug it catches: a reader that hard-requires borderBoxSize drops every frame
-// from a UA/path that only delivers contentBoxSize, so such targets never
-// advertise.
-
-describe('createSizeAdvertiser — content-box fallback', () => {
+describe('createSizeAdvertiser: content-box fallback', () => {
   it('uses contentBoxSize when borderBoxSize is absent', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     createSizeAdvertiser(el(), { axis: 'block', publish })
@@ -181,12 +167,7 @@ describe('createSizeAdvertiser — content-box fallback', () => {
   })
 })
 
-// ── empty box arrays don't lock the advertiser ────────────────────────────
-// Bug it catches: an empty-array frame that writes `undefined`/0 into `latest`
-// (instead of leaving it untouched) would either crash on `.blockSize` or
-// poison the dedupe baseline, so a subsequent real size never publishes.
-
-describe('createSizeAdvertiser — empty box arrays', () => {
+describe('createSizeAdvertiser: empty box arrays', () => {
   it('an empty-array entry publishes nothing yet does not break a later real frame', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     createSizeAdvertiser(el(), { axis: 'block', publish })
@@ -202,11 +183,7 @@ describe('createSizeAdvertiser — empty box arrays', () => {
   })
 })
 
-// ── extent 0 is a real frame (collapse), distinct from NaN (drop) ─────────
-// Bug it catches: a producer that treats a falsy 0 like a missing value would
-// silently swallow a genuine content-collapse, leaving the host oversized.
-
-describe('createSizeAdvertiser — zero extent', () => {
+describe('createSizeAdvertiser: zero extent', () => {
   it('publishes extent 0 (content collapsed) rather than dropping the frame', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     createSizeAdvertiser(el(), { axis: 'block', publish })
@@ -219,12 +196,7 @@ describe('createSizeAdvertiser — zero extent', () => {
   })
 })
 
-// ── two advertisers are fully independent ─────────────────────────────────
-// Bug it catches: shared module-level `latest`/dedupe state (a singleton) would
-// cross-publish between advertisers, or one's baseline would suppress the
-// other's first emit.
-
-describe('createSizeAdvertiser — independent instances', () => {
+describe('createSizeAdvertiser: independent instances', () => {
   it('each advertiser owns its own sink and dedupe baseline', () => {
     const publishA = vi.fn<(s: AdvertisedSize) => void>()
     const publishB = vi.fn<(s: AdvertisedSize) => void>()
@@ -248,11 +220,7 @@ describe('createSizeAdvertiser — independent instances', () => {
   })
 })
 
-// ── a fresh advertiser starts with a clean baseline ───────────────────────
-// Bug it catches: a leaked/static dedupe baseline would let a disposed
-// advertiser's last extent swallow a new advertiser's identical first frame.
-
-describe('createSizeAdvertiser — baseline resets per instance', () => {
+describe('createSizeAdvertiser: baseline resets per instance', () => {
   it('a new advertiser publishes its first frame even if it equals a disposed one', () => {
     const publishA = vi.fn<(s: AdvertisedSize) => void>()
     const handleA = createSizeAdvertiser(el(), { axis: 'block', publish: publishA })
@@ -270,12 +238,7 @@ describe('createSizeAdvertiser — baseline resets per instance', () => {
   })
 })
 
-// ── construction-time body/html footgun guard ─────────────────────────────
-// Bug it catches: a missing (or always-on) <body>/<html> warning means the
-// classic "measuring the host-driven view size → loop never converges" mistake
-// ships silently, or every ordinary element spams a false warning.
-
-describe('createSizeAdvertiser — body/html guard', () => {
+describe('createSizeAdvertiser: body/html guard', () => {
   it('warns once when target is document.body and not for a normal element', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const publish = vi.fn<(s: AdvertisedSize) => void>()
@@ -289,11 +252,7 @@ describe('createSizeAdvertiser — body/html guard', () => {
   })
 })
 
-// ── dispose() is idempotent ───────────────────────────────────────────────
-// Bug it catches: a dispose missing its `disposed` re-entry guard would
-// double-disconnect / double-cancel on a second call (or throw).
-
-describe('createSizeAdvertiser — idempotent dispose', () => {
+describe('createSizeAdvertiser: idempotent dispose', () => {
   it('a second dispose() is a no-op (no throw, no extra disconnect)', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const handle = createSizeAdvertiser(el(), { axis: 'block', publish })

@@ -124,13 +124,7 @@ function buildElement(): { el: HTMLElement; rectSpy: ReturnType<typeof vi.fn> } 
   return { el, rectSpy }
 }
 
-// ── Contract 1: source = RO border-box, never getBoundingClientRect ──
-// Bug it catches: an advertiser that measures via getBoundingClientRect
-// (content/layout box, affected by transforms/zoom) instead of the RO
-// entry's border-box advertises the wrong number — and re-introduces the
-// forced-reflow the RO path exists to avoid.
-
-describe('createSizeAdvertiser — source is the RO border-box', () => {
+describe('createSizeAdvertiser: border-box measurement', () => {
   it('reads borderBoxSize from the entry and never calls getBoundingClientRect', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el, rectSpy } = buildElement()
@@ -159,12 +153,7 @@ describe('createSizeAdvertiser — source is the RO border-box', () => {
   })
 })
 
-// ── Contract 2: payload is a single-axis scalar ──────────────────────
-// Bug it catches: a payload that leaks the second axis (or whose `axis`
-// drifts from the owned axis) breaks the host's single-axis DAG invariant —
-// the cross-process loop could feed both axes and oscillate.
-
-describe('createSizeAdvertiser — single-axis scalar payload', () => {
+describe('createSizeAdvertiser: single-axis payload', () => {
   it('publishes only { axis, extent } with axis equal to the owned axis', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el } = buildElement()
@@ -183,12 +172,7 @@ describe('createSizeAdvertiser — single-axis scalar payload', () => {
   })
 })
 
-// ── Contract 3: quantize + clamp-to-zero ─────────────────────────────
-// Bug it catches: an advertiser that forwards raw subpixel floats causes
-// per-frame jitter in the host's sizing; one that *drops* a negative frame
-// (instead of clamping to 0) leaves the host stuck at a stale extent.
-
-describe('createSizeAdvertiser — quantize and clamp', () => {
+describe('createSizeAdvertiser: quantize and clamp', () => {
   it('rounds the raw extent (Math.round)', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el } = buildElement()
@@ -215,12 +199,7 @@ describe('createSizeAdvertiser — quantize and clamp', () => {
   })
 })
 
-// ── Contract 4: hygiene filter drops the whole frame ─────────────────
-// Bug it catches: a NaN/Infinity extent (degenerate layout, detached node)
-// published as-is corrupts the host's size; the contract is to drop the
-// frame entirely, not clamp/coerce it to some number.
-
-describe('createSizeAdvertiser — non-finite values drop the frame', () => {
+describe('createSizeAdvertiser: non-finite values', () => {
   it('does not publish when the raw extent is NaN', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el } = buildElement()
@@ -246,12 +225,7 @@ describe('createSizeAdvertiser — non-finite values drop the frame', () => {
   })
 })
 
-// ── Contract 5: RAF coalescing ───────────────────────────────────────
-// Bug it catches: a synchronous publish per RO tick floods IPC; the
-// contract is to coalesce N triggers in one frame into a single RAF and a
-// single publish.
-
-describe('createSizeAdvertiser — RAF coalescing', () => {
+describe('createSizeAdvertiser: RAF coalescing', () => {
   it('multiple RO ticks in one frame schedule one RAF and publish once', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el } = buildElement()
@@ -288,12 +262,7 @@ describe('createSizeAdvertiser — RAF coalescing', () => {
   })
 })
 
-// ── Contract 6: last-extent dedupe on the RO→RAF stream ──────────────
-// Bug it catches: a path that re-advertises a byte-for-byte identical extent
-// every frame floods the host with redundant resizes; or a dedupe that
-// compares the wrong baseline so a real change is dropped.
-
-describe('createSizeAdvertiser — last-extent dedupe', () => {
+describe('createSizeAdvertiser: last-extent deduplication', () => {
   it('an unchanged extent on a follow-up RO tick does not re-publish', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el } = buildElement()
@@ -340,11 +309,7 @@ describe('createSizeAdvertiser — last-extent dedupe', () => {
   })
 })
 
-// ── Contract 7: handle shape has no `present` ────────────────────────
-// Bug it catches: a handle that exposes a `present`/attach toggle would
-// imply a detach path the reverse primitive deliberately does not have.
-
-describe('createSizeAdvertiser — handle shape', () => {
+describe('createSizeAdvertiser: handle methods', () => {
   it('exposes only update and dispose (no present)', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el } = buildElement()
@@ -358,16 +323,7 @@ describe('createSizeAdvertiser — handle shape', () => {
   })
 })
 
-// ── Contract 8: update() swaps the publish sink ──────────────────────
-// Bug it catches: an update() that ignores the new sink keeps emitting to a
-// dead channel.
-//
-// NOTE: `update` now takes ONLY the new publish — axis is immutable by
-// construction and is no longer expressible in `update` (you cannot attempt to
-// change it), so the previous "ignores a changed axis" test is gone: the
-// mistake is now a compile error, not a runtime no-op.
-
-describe('createSizeAdvertiser — update() swaps publish', () => {
+describe('createSizeAdvertiser: update()', () => {
   it('routes subsequent emits to the new publish', () => {
     const first = vi.fn<(s: AdvertisedSize) => void>()
     const second = vi.fn<(s: AdvertisedSize) => void>()
@@ -384,12 +340,7 @@ describe('createSizeAdvertiser — update() swaps publish', () => {
   })
 })
 
-// ── Contract 9: dispose() tears down and silences ────────────────────
-// Bug it catches: a dispose that forgets to disconnect the RO / cancel the
-// in-flight RAF leaks observers and can advertise after teardown (the IPC
-// target may already be gone → throw).
-
-describe('createSizeAdvertiser — dispose()', () => {
+describe('createSizeAdvertiser: dispose()', () => {
   it('disconnects the observer and cancels a pending RAF', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el } = buildElement()
@@ -434,16 +385,7 @@ describe('createSizeAdvertiser — dispose()', () => {
   })
 })
 
-// ── Contract 10: initial sync emit when a size is available ──────────
-// Bug it catches: an advertiser that only emits on *change* never advertises
-// its first measurable size, so the host starts with no extent and the
-// placeholder is mis-sized until the content next happens to resize.
-//
-// Per the harness note we express "can obtain an initial value" as the
-// observe→first-RO-frame→flush path rather than assuming the constructor
-// emits synchronously.
-
-describe('createSizeAdvertiser — initial value', () => {
+describe('createSizeAdvertiser: initial value', () => {
   it('advertises the first measurable size once on the first RO frame', () => {
     const publish = vi.fn<(s: AdvertisedSize) => void>()
     const { el } = buildElement()

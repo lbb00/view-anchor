@@ -151,11 +151,8 @@ function buildElement(rect: {
 
 const opts = (o: ViewAnchorOptions): ViewAnchorOptions => o
 
-// ── Contract 1: present=true with geometry → immediate sync publish ──
-// Bug it catches: a missing initial emit means the main process never
-// learns where the view is — the native view never attaches.
-
-describe('createViewAnchor — present=true initial sync', () => {
+// Initial synchronous publish
+describe('createViewAnchor: initial sync publish', () => {
   it('publishes the rounded/clamped rect once, synchronously, on create', () => {
     const publish = vi.fn()
     const { el } = buildElement({ x: 10, y: 20, w: 300, h: 400 })
@@ -170,31 +167,22 @@ describe('createViewAnchor — present=true initial sync', () => {
     })
   })
 
-  it('rounds x/y (negatives allowed) and clamps width/height to ≥0', () => {
+  it('rounds x/y (negatives allowed) and clamps width/height to >= 0', () => {
     const publish = vi.fn()
-    // Fractional + negative left/top: x/y are ROUNDED (not clamped) — an
-    // element scrolled off the top/left edge has a legitimately negative
-    // origin and the native view must track it there. width/height are
-    // clamped to ≥0 (0 = the canonical hidden signal).
     const { el } = buildElement({ x: -3.4, y: 12.6, w: 100.49, h: 0.5 })
     createViewAnchor(el, opts({ present: true, publish }))
 
     expect(publish).toHaveBeenCalledWith({
-      x: -3, // Math.round(-3.4) — NOT clamped to 0
-      y: 13, // Math.round(12.6)
-      width: 100, // Math.max(0, Math.round(100.49))
-      height: 1, // Math.max(0, Math.round(0.5))
+      x: -3,
+      y: 13,
+      width: 100,
+      height: 1,
     })
   })
 })
 
-// ── Contract 2: present=false → immediate zero, no observer ──────────
-// Bug it catches: if present=false does NOT publish zero, the native view
-// never detaches and its old frame stays painted over the content.
-// Bug it also catches: installing a ResizeObserver while detached wastes
-// work and can re-publish a non-zero rect, re-attaching the view.
-
-describe('createViewAnchor — present=false', () => {
+// Present = false
+describe('createViewAnchor: present=false', () => {
   it('publishes {0,0,0,0} immediately and does NOT observe', () => {
     const publish = vi.fn()
     const { el } = buildElement({ x: 10, y: 20, w: 300, h: 400 })
@@ -208,13 +196,8 @@ describe('createViewAnchor — present=false', () => {
   })
 })
 
-// ── Contract 3: present=true installs observers; ticks publish SYNC ──
-// Bug it catches: a tick that defers to a RAF stacks a second compositor
-// frame on top of the unavoidable cross-process frame — the overlay
-// visibly trails the region edge during a drag. The new contract is to
-// publish in the triggering tick itself, no RAF.
-
-describe('createViewAnchor — present=true observation', () => {
+// Present = true observation
+describe('createViewAnchor: observation', () => {
   it('observes the target and adds a window resize listener', () => {
     const publish = vi.fn()
     const { el } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
@@ -269,14 +252,7 @@ describe('createViewAnchor — present=true observation', () => {
   })
 })
 
-// ── Contract 4: dedup-coalescing ─────────────────────────────────────
-// Bug it catches: without dedup, a burst of RO+resize ticks in one frame —
-// or a continuous drag that keeps re-firing the same final rect — produces N
-// publishes (and N native-view setBounds calls) → IPC flood / jitter. The
-// contract: a tick whose measured rect is byte-identical to the last published
-// one is dropped; a distinct rect always publishes.
-
-describe('createViewAnchor — dedup coalescing', () => {
+describe('createViewAnchor: deduplication', () => {
   it('N ticks measuring the SAME rect → exactly ONE publish', () => {
     const publish = vi.fn()
     const { el } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
@@ -337,12 +313,7 @@ describe('createViewAnchor — dedup coalescing', () => {
   })
 })
 
-// ── Contract 5: update() re-publishes immediately per new state ──────
-// Bug it catches: update() that defers (or no-ops) leaves the native view
-// at its old bounds after a present flip — e.g. a panel that hid stays
-// painted, or a panel that showed never re-measures.
-
-describe('createViewAnchor — update()', () => {
+describe('createViewAnchor: update()', () => {
   it('true → false: publishes zero immediately and stops observing', () => {
     const publish = vi.fn()
     const { el } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
@@ -414,12 +385,7 @@ describe('createViewAnchor — update()', () => {
   })
 })
 
-// ── Contract 6: dispose() tears everything down ─────────────────────
-// Bug it catches: a dispose that forgets to disconnect the RO / remove the
-// resize listener leaks observers and can publish after teardown (the IPC
-// target may already be gone → throw).
-
-describe('createViewAnchor — dispose()', () => {
+describe('createViewAnchor: dispose()', () => {
   it('disconnects the observer and removes the resize listener', () => {
     const publish = vi.fn()
     const { el } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
@@ -451,13 +417,7 @@ describe('createViewAnchor — dispose()', () => {
   })
 })
 
-// ── Contract 7: teardown safety (no stale tick can overwrite live) ───
-// There is no queued frame anymore, so the old "stale-RAF guard" is now a
-// pure synchronous-read guard: every emit reads `disposed`/`present` live,
-// so a tick after dispose()/update(present=false) can never write a stale
-// rect over the live one.
-
-describe('createViewAnchor — teardown safety', () => {
+describe('createViewAnchor: teardown safety', () => {
   it('a tick after dispose() does not publish (disposed read synchronously)', () => {
     const publish = vi.fn()
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })

@@ -1,13 +1,13 @@
 ---
 title: view-anchor
-description: 让主进程原生视图（Electron WebContentsView）始终贴住一个 DOM 元素的矩形。
+description: 将主进程原生视图（如 Electron WebContentsView）与 DOM 元素的几何位置保持同步。
 ---
 
 # view-anchor
 
-让一块主进程原生视图（Electron `WebContentsView`）始终贴住一个 DOM 元素的屏幕矩形。它测量目标元素的 `getBoundingClientRect()`，把矩形交给注入的 `publish` 回调（由你接上 IPC → `setBounds`），并在元素位移或缩放时重新发布。
+让宿主外部的视图（例如 Electron 的 `WebContentsView`）实时对齐某个 DOM 元素的屏幕位置。核心逻辑通过 `getBoundingClientRect()` 测量目标元素，把矩形数据交给注入的 `publish` 回调（通常由调用方转发 IPC 到 `setBounds`），并在元素移动或缩放时同步更新。
 
-核心不依赖 React、Electron 或任何宿主布局引擎；涉及 React 的代码只在 `view-anchor/react` 适配层。
+核心不依赖 React、Electron 或特定的布局引擎；React 相关的逻辑均隔离在 `view-anchor/react` 适配层中。
 
 <iframe
   src="./index.html"
@@ -15,7 +15,7 @@ description: 让主进程原生视图（Electron WebContentsView）始终贴住�
   style={{ width: '100%', height: '560px', border: '0', borderRadius: '12px' }}
 />
 
-## 架构
+## 运行机制
 
 ```mermaid
 flowchart LR
@@ -29,97 +29,97 @@ flowchart LR
   VA -->|"publish(bounds)<br/>IPC → setBounds"| WCV
 ```
 
-`WebContentsView` 是主进程对象，位置只能由主进程 `setBounds` 设定；而布局是渲染进程用 CSS 算的。两边不直接接触，view-anchor 就是它们之间的桥：占位 div 在 DOM 里占位但不渲染，原生视图浮在其上，由 view-anchor 维持贴合。`publish` 是注入的，所以核心对 Electron 一无所知——测试里它是 spy，生产里是一次 IPC 发送。
+`WebContentsView` 运行在主进程，位置由主进程的 `setBounds` 设置；页面布局则由渲染进程通过 CSS 计算。两者不在同一个进程中，view-anchor 作为桥梁连接它们：占位 div 参与 DOM 布局，外部视图悬浮在上方，由 view-anchor 维持对齐。`publish` 是外部注入的回调，核心模块本身完全不感知 Electron。
 
 ## createViewAnchor(target, opts)
 
-命令式核心，把一块原生视图绑定到一个元素，返回 `{ update, dispose }`。
+命令式核心接口，将原生视图绑定到目标元素，返回 `{ update, dispose }`。
 
 ```ts
 const handle = createViewAnchor(target, {
-  present: true,                 // 是否挂载原生视图
-  publish: (bounds) => { ... },  // 接收实时矩形，负责 IPC → setBounds
+  present: true,                 // 是否显示原生视图
+  publish: (bounds) => { ... },  // 接收最新矩形，转发给 setBounds
 })
 ```
 
-| 状态 / 调用 | 行为 |
+| 状态 / 操作 | 行为 |
 |---|---|
-| `present: true` | 立即发布测量矩形，之后在每次 `ResizeObserver` 触发、窗口 `resize` 时**同步**重新发布。 |
-| `present: false` | 停止观察，发布一次 `{0,0,0,0}`。 |
-| `update(opts)` | 按新选项同步重新应用（重置去重基线，强制重发一次）。 |
-| `dispose()` | 停止观察、移除监听，此后不再发布（也不补发零矩形）。 |
+| `present: true` | 立即发布测量矩形，之后每次 `ResizeObserver` 触发或窗口 `resize` 时同步重发。 |
+| `present: false` | 停止观察，发布一次 `{ x: 0, y: 0, width: 0, height: 0 }`。 |
+| `update(opts)` | 应用新选项，重置去重缓存并立即重新发布一次。 |
+| `dispose()` | 停止所有监听并释放资源，此后不再发布。 |
 
-测量矩形按 `Math.round` 取整；**width/height 钳到 ≥0（0=隐藏信号），但 x/y 允许负**——元素滚出上 / 左边缘时原点本就该是负的，钳零会把原生视图钉在边缘而非跟随它移出屏外（各消费者的 IPC schema 自己定 origin 策略）。
+测量结果使用 `Math.round` 取整。`width` 和 `height` 会限制为 `>= 0`（0 代表收起），但 `x` 和 `y` 允许为负数。当元素滚动出视口上边缘或左边缘时，原点自然会是负值，保留负值可以让视图正常跟随元素滚出屏幕。
 
-**同步发布，不走 RAF**：原生 overlay 是跨进程 `WebContentsView`，`setBounds` 本就比渲染进程的 DOM 绘制晚约 1 个合成帧；再用 RAF 推迟一帧 → 拖拽时 overlay 可见拖尾（放大时露背景最明显）。在触发回调里直接测量+发布去掉这一自加的帧。RAF 原本承担的「合并同帧多次触发」由**同值去重**接管：若本次测量矩形与上次已发布的逐字段相等就丢弃，所以一次连续拖拽里每个不同矩形至多发一次。`update` 会先把去重基线清空，保证状态变化（zoom 骑在 `publish` 闭包里、不在 `Bounds` 里）即使几何不变也重发一次。
+**为什么同步发布而不走 RAF：** 原生 overlay 处于另一个进程，IPC 传递到 `setBounds` 相比渲染进程本身的绘制已经有一帧左右的合成延迟。如果测量和发布再进一次 RAF，拖拽时就会叠加第二帧延迟，造成明显的跟随拖尾。在 observer 回调中直接同步测量和发布可以省掉这层额外延迟。同帧多次触发的防抖则交由同值去重处理：只有矩形数值与上一次不同时才触发 `publish`。调用 `update` 时会先清除去重基线，确保外部状态变化（如缩放系数变化）时即使几何数据未变也能重新发布。
 
-撤销安全：没有排队的帧可以「跑赢」状态变化——每次发布开头同步读 `disposed`/`present`，`update`/`dispose` 之后的触发立即 bail。
+调用 `dispose()` 或更新为 `present: false` 后，内部状态会立即置为停用，后续任何异步触发都会直接返回，避免过期数据覆盖新状态。
 
-## present / 零矩形 语义
+## 收起与零矩形
 
-- **`present`** —— 「原生视图是否该挂载」的唯一事实来源，与 DOM 生命周期解耦。
-- **`{0,0,0,0}`（ZERO）** —— 收起信号。宿主把零面积读作「摘除子视图，但保留其 `WebContents` 存活」，即收起而非销毁，重新挂载瞬时且状态完整。
-- **dispose 后保持静默** —— 不补发零矩形。元素真正消失时，应由调用方先发 ZERO 再 dispose（适配层已替你处理）。
+- **`present`**：标识原生视图当前是否需要显示。
+- **`{ x: 0, y: 0, width: 0, height: 0 }`（零矩形）**：收起信号。宿主可以将零面积理解为“从窗口中移出视图，但保留其 `WebContents` 实例”，实现秒开复用而不是反复销毁重建。
+- **dispose 行为**：`dispose()` 只停止监听，不补发零矩形。如果需要在元素移除时通知宿主收起视图，应当在 dispose 之前调用 `update({ present: false, ... })`，React 适配层已自动处理了该生命周期。
 
-## createPlacementAnchor(target, opts) — 显式可见性变体
+## 显式可见性（createPlacementAnchor）
 
-`createViewAnchor` 用零矩形 `{0,0,0,0}` 兼任「收起」信号，可见性是从几何推断的。`createPlacementAnchor` 把可见性提升为显式判别式，发的是 `Placement` 而非 `Bounds`：
+`createViewAnchor` 使用零矩形表示收起，无法区分“隐藏”与“元素确实存在但尺寸为 0x0”的情况。`createPlacementAnchor` 采用显式的 `Placement` 判别联合类型：
 
 ```ts
 const handle = createPlacementAnchor(target, {
-  visible: true,                 // 调用方意图：视图是否该在屏
+  visible: true,                 // 显式控制可见性
   publish: (placement) => { ... },
 })
 ```
 
-| 状态 / 选项 | 行为 |
+| 选项 / 操作 | 行为 |
 |---|---|
-| `visible: true` | 发 `measurePlacement(target)`（`{ visible:true, bounds }`），并在每次 `ResizeObserver` / `resize` 触发**同步**重发。 |
-| `visible: false` | 发 `{ visible:false }`（**不是**零矩形），停止观察。 |
-| `guardDisplayNone`（默认 false） | 开启后，测出零面积的 target（display:none / 卸载 / 首帧未稳）发 `{ visible:false }` 而非 `{ visible:true, bounds:0×0 }`，并挂 `IntersectionObserver` 捕捉 `ResizeObserver` 不上报的 display:none 切换。 |
-| `followScroll`（默认 false） | 捕获阶段监听 `window` 的 `scroll`，祖先滚动容器滚动 target 时重测重发。 |
-| `followGeometry`（默认 false） | 按需开窗的 RAF 几何哨兵，捕捉无 DOM 事件上报的祖先 transform / reflow 位移；几何静止几帧后自动关窗，空闲时零成本。可由 `pulse(durationMs?)` 显式开窗。 |
+| `visible: true` | 发布 `{ visible: true, bounds }`，并在尺寸变化时同步重发。 |
+| `visible: false` | 发布 `{ visible: false }`，停止观察。 |
+| `guardDisplayNone`（默认 false） | 开启后，测出零面积的元素发布 `{ visible: false }`，并挂载 `IntersectionObserver` 捕捉 `display: none` 切换。 |
+| `followScroll`（默认 false） | 在捕获阶段监听 `window` 的 `scroll` 事件，祖先容器滚动时重新测量。 |
+| `followGeometry`（默认 false） | 在需要时启动单帧 RAF 轮询，捕获没有 DOM 事件的祖先 transform 或布局位移；几何稳定后自动停止。也可通过 `pulse()` 手动触发。 |
 
-去重携带判别式（`samePlacement`），所以可见性翻转绝不会被同值合并掉——即使几何看上去一样。真正 0×0 但在屏的视图（`{ visible:true, bounds:{...,width:0} }`）与隐藏视图（`{ visible:false }`）由此可区分，而零矩形约定下二者会塌缩成同一个值。
+去重逻辑会同时对比 `visible` 状态，因此可见性切换不会被同值去重误吞。
 
 ## useViewAnchor(opts)
 
-React 适配层，从 `view-anchor/react` 导入，返回一个挂到占位元素上的 ref 回调。
+React 适配层，从 `view-anchor/react` 导出，返回用于挂载在占位元素上的 ref 回调。
 
 ```tsx
 import { useViewAnchor } from 'view-anchor/react'
 
 const ref = useViewAnchor({
   present,            // boolean
-  publish,            // Publisher<Bounds>；同步 false 表示未接收
-  deps: [signature],  // 可选：会移动矩形、但 DOM 看不见的状态
+  publish,            // Publisher<Bounds>，同步返回 false 表示未接收
+  deps: [signature],  // 可选：影响位置但不会触发 ResizeObserver 的外部依赖
 })
 return <div ref={ref} />
 ```
 
 | 时机 | 行为 |
 |---|---|
-| 挂载 | `createViewAnchor(el, opts)` |
-| `opts` / `deps` 变化 | `update` |
-| 真实卸下 | 最迟在一个 microtask 内发零矩形，再 `dispose` |
+| 挂载 | 创建 anchor 实例并开始监听 |
+| `opts` 或 `deps` 变化 | 调用 `update` 更新参数 |
+| 卸载 | 在 microtask 内发布零矩形并释放资源 |
 
-**`deps`** —— `ResizeObserver` 只响应纯几何变化。会移动矩形却不改变被观察元素尺寸的状态（布局拓扑签名、路由切换、兄弟标签页 `display:none`）要放进 `deps`。数组长度需在每次渲染间保持稳定。
+**`deps` 参数**：`ResizeObserver` 只在元素自身的 border-box 改变时触发。如果页面上有某些状态会移动元素位置却不改变其尺寸（例如兄弟节点切换、路由跳转、复杂的外部布局更新），可将这些状态放入 `deps`。
 
-React 18 以 `ref(null)` 表示卸下；React 19 可以调用 ref 返回的清理函数。适配层把隐藏延后一个 microtask：React 19 开发模式的清理后立即重新挂载会取消隐藏，真实卸下则在该 microtask 内隐藏并释放。React 18/19 StrictMode 重放和 hidden→shown 重挂载都不会产生多余的隐藏状态。
+React 18 在卸载时会传入 `ref(null)`，React 19 支持 ref 清理函数。适配层将卸载通知推迟一个微任务执行：React 19 在 StrictMode 下开发阶段的快速卸载重挂载会被就地取消，真正的卸载则在微任务内正常触发清理。
 
 ## usePlacementAnchor(opts)
 
-`usePlacementAnchor` 也从 `view-anchor/react` 导入。它把 `createPlacementAnchor` 的 `visible`、`followScroll`、`followGeometry` 和 `guardDisplayNone` 交给 React ref 生命周期管理，返回同样的 ref 回调；真实卸下时发布 `{ visible:false }` 后释放。
+同样导出自 `view-anchor/react`，将 `createPlacementAnchor` 的 `visible`、`followScroll`、`followGeometry` 与 `guardDisplayNone` 接入 React ref 生命周期。真正卸载时会发布 `{ visible: false }` 并释放监听。
 
-## 文件
+## 模块结构
 
-| 文件 | 作用 |
+| 文件 | 用途 |
 |---|---|
-| `src/view-anchor.ts` | 正向命令式核心 `createViewAnchor` / `createPlacementAnchor` / `measurePlacement`。无 React、无 Electron。 |
-| `src/react.ts` | `view-anchor/react` 适配层：`useViewAnchor` 和 `usePlacementAnchor`。 |
-| `src/size-advertiser.ts` | 反向命令式核心 `createSizeAdvertiser`。 |
-| `src/measure-loop.ts` | 反向专用的 RAF 合并 / 去重 / dispose 引擎 `createMeasureLoop`（不导出）。 |
-| `src/types.ts` | `Bounds`、`Placement`、各核心的选项与句柄类型、反向的 `AdvertisedAxis` / `AdvertisedSize`。 |
-| `src/index.ts` | `view-anchor` 核心入口；不加载 React。 |
+| `src/view-anchor.ts` | 正向命令式核心：`createViewAnchor`、`createPlacementAnchor`、`measurePlacement`。不含 React 和 Electron 依赖。 |
+| `src/react.ts` | React 适配层：`useViewAnchor` 与 `usePlacementAnchor`。 |
+| `src/size-advertiser.ts` | 反向核心：`createSizeAdvertiser`。 |
+| `src/measure-loop.ts` | 反向专用的 RAF 调度与去重循环（内部实现，不对外导出）。 |
+| `src/types.ts` | 类型定义（`Bounds`、`Placement`、各模块配置与句柄）。 |
+| `src/index.ts` | 核心入口，默认不引入 React。 |
 
-核心运行时只依赖浏览器 API（`ResizeObserver`、`getBoundingClientRect`、`window` 的 `resize` 监听）；`view-anchor/react` 额外依赖 React。`requestAnimationFrame` 只在反向 `createSizeAdvertiser`（经 `createMeasureLoop`）和 `createPlacementAnchor` 的 opt-in `followGeometry` 哨兵里用；正向的 `createViewAnchor` 同步发布、不走 RAF。
+核心运行时仅依赖标准 Web API（`ResizeObserver`、`getBoundingClientRect`、`addEventListener`）；`requestAnimationFrame` 仅在反向模块与可选的 `followGeometry` 中按需使用。

@@ -1,6 +1,6 @@
 # view-anchor
 
-> A high-performance geometry bridge that keeps a main-process native view aligned with renderer DOM.
+> A high-performance geometry bridge that keeps anything living outside the DOM aligned to a DOM element: an Electron `WebContentsView`, a native webview in another desktop shell, a cross-origin iframe, or any surface you position from a rectangle. Every move and resize is published synchronously with no duplicate frames, and the whole package is about 2.6 KB gzipped.
 
 [![npm version](https://img.shields.io/npm/v/view-anchor)](https://www.npmjs.com/package/view-anchor)
 [![npm downloads](https://img.shields.io/npm/dm/view-anchor)](https://www.npmjs.com/package/view-anchor)
@@ -9,26 +9,45 @@
 
 [English](./README.md) · [简体中文](./README.zh-CN.md)
 
-> 🎮 **Live demo**: the [3D interactive demo](https://lbb00.github.io/view-anchor/) runs the real core in your browser — resize the splitter, toggle presence, and watch the native view follow.
+> 🎮 **Live demo**: the [3D interactive demo](https://lbb00.github.io/view-anchor/) runs the real core in your browser. Drag the splitter, toggle the panel, and watch the native view follow.
 
-In Electron, a native `WebContentsView` lives in the main process while your layout lives in the renderer. Layout libraries (flexbox, dockview, react-resizable-panels…) only move DOM nodes — they have no idea where the process boundary is. `view-anchor` bridges that gap: it measures a target element, hands the rectangle to your `publish` callback, and updates the native view when the DOM moves or resizes.
+## The problem
 
-The hot paths are deliberately small: synchronous delivery, scalar deduplication before payload allocation in reverse size reporting, bounded animation-frame following, fixed-shape state for V8, and latest-value microtask batching. CPU, retained memory, V8 optimization, and actual tree-shaken output are measured by a reproducible benchmark rather than inferred from source style.
+Some things you want to place inside your layout are not DOM nodes. An Electron `WebContentsView` is positioned by the main process. A native webview in another desktop shell is positioned by host code. The document inside a cross-origin iframe only knows what you tell it over `postMessage`. Your layout, whether it is flexbox, dockview, or react-resizable-panels, only moves DOM nodes and has no idea that something else is supposed to sit exactly on top of one of them.
 
-## Features
+`view-anchor` closes that gap. You point it at a placeholder element. It measures the element and, every time the element moves or resizes, hands the new rectangle to your `publish` callback. What happens next is up to you: `ipcRenderer.send` plus `view.setBounds` in Electron, `postMessage` to an iframe, or a direct call into whatever positions the surface.
 
-- **One-to-one binding** — a single native view follows a single DOM element. `update()` applies new options and re-publishes immediately.
-- **Synchronous, deduplicated publishes** — measures and publishes in the same observer tick. Geometry identical to the last accepted value is not sent again.
-- **Collapse without destroying** — `present: false` publishes a zero rect and stops observing; the host can detach the subview while keeping the `WebContents` alive.
-- **Explicit visibility** — the `Placement` API distinguishes a genuinely 0×0-but-visible view from a hidden one, instead of inferring visibility from geometry.
-- **Content-driven sizing (reverse direction)** — `createSizeAdvertiser` reports a view's own content size back so a DOM placeholder can grow to match.
-- **Low-overhead wire protocol** — `view-anchor/protocol` adds versioned envelopes, bounded runtime decoding, O(1) per-anchor generation changes, latest-wins ordering, and same-task microtask batching.
-- **React adapter** — `useViewAnchor` hook that attaches to a placeholder element.
-- **Framework-neutral internals** — geometry and transport code do not import Electron or a layout engine; React remains isolated in the adapter module.
+The core has no dependency on Electron, a browser shell, React, or any layout library. It only uses `ResizeObserver`, `requestAnimationFrame`, and `getBoundingClientRect`. React support lives in a separate `view-anchor/react` entry.
 
-## Performance
+## Built for the hot path
 
-Performance is treated as a reproducible engineering constraint. `pnpm benchmark` measures CPU, retained heap, RSS, extreme anchor counts, and actual tree-shaken output across fresh Node.js processes; `pnpm benchmark:v8` adds optimization, inlining, and deoptimization traces. See the [full performance report](./docs/performance-report.md) for results, methodology, and measurement boundaries.
+Geometry updates fire on every resize and, when following a drag, on every animation frame. The library is written for that path and the numbers are measured, not assumed:
+
+- **Synchronous delivery.** Measurement and publish happen inside the same `ResizeObserver` callback. No timers, no extra frame of lag.
+- **Dedupe before allocate.** A rectangle identical to the last accepted one is rejected by comparing four numbers, before any object is created.
+- **Frame following only when needed.** `followGeometry` polls `requestAnimationFrame` during a scroll burst, a splitter drag, or an explicit `pulse()`, then closes itself once the rectangle settles. Idle cost is zero, and hidden or invalid targets are capped at 30 frames.
+- **O(1) generation changes.** In the protocol layer, moving an anchor to a new generation or clearing it does not touch other anchors.
+- **Latest-wins batching.** Messages queued in the same task are merged in a microtask and only the newest geometry per anchor is sent.
+- **Small, tree-shakeable output.** Every function is a separate export with `sideEffects: false`. If you only need `createViewAnchor`, you pay for 528 bytes gzipped.
+
+Numbers from `pnpm benchmark` on Node.js 24, Apple M4, median of three fresh processes:
+
+| Operation | Volume | Time |
+| --- | ---: | ---: |
+| `measurePlacement` | 1,000,000 calls | 8.9 ms |
+| Publish a placement message | 1,000,000 calls | 7.3 ms |
+| Decode a valid batch | 100,000 messages | 3.1 ms |
+| Move all anchors to a new generation | 10,000 anchors | 1.7 ms |
+| Flush one message with 100,000 anchors already tracked | 1 message | 0.008 ms |
+
+| Entry | Gzipped |
+| --- | ---: |
+| `view-anchor` (everything) | 2.6 KB |
+| `createViewAnchor` alone | 528 B |
+| `view-anchor/protocol` | 1.4 KB |
+| `view-anchor/react` | 2.0 KB |
+
+These are same-machine Node.js microbenchmarks. They do not include DOM layout, Electron IPC, or structured clone, so measure those in your own app. Methodology, memory figures, and V8 traces are in [docs/performance-report.md](./docs/performance-report.md).
 
 ## Installation
 
@@ -38,11 +57,11 @@ pnpm add view-anchor
 npm install view-anchor
 ```
 
-React is an optional peer dependency for the package. Import hooks from `view-anchor/react`. The root entry also re-exports `useViewAnchor` for compatibility with `v0.1.2`, so applications that load `view-anchor` must have React installed. `view-anchor/protocol` can be loaded without React.
+React is an optional peer dependency. Import the hooks from `view-anchor/react`. The root entry also re-exports `useViewAnchor` for compatibility with `v0.1.2`, so any app that imports `view-anchor` needs React installed. `view-anchor/protocol` does not.
 
-## Quick start
+## Usage
 
-### Imperative core
+### Follow a DOM element
 
 ```ts
 import { createViewAnchor } from 'view-anchor'
@@ -52,9 +71,11 @@ const handle = createViewAnchor(target, {
   publish: (bounds) => { ... },  // receive live rectangles; wire IPC → setBounds
 })
 
-handle.update({ present, publish }) // apply new options, re-publishes immediately
+handle.update({ present, publish }) // apply new options and publish right away
 handle.dispose()                    // stop observing; never publishes again
 ```
+
+Set `present: false` to collapse the view. The core publishes a zero rectangle and stops observing. The host can detach the subview while keeping the `WebContents` alive, so re-showing it later is instant.
 
 ### React
 
@@ -72,29 +93,48 @@ function DebugPanel({ visible }: { visible: boolean }) {
 }
 ```
 
-For explicit `Placement` visibility and automatic scroll or geometry following, import `usePlacementAnchor` from the same entry.
+The hook survives React 18 and 19 StrictMode double-mounting without publishing stale frames.
 
-### Reverse: content size reporting
+### Explicit visibility
 
-When a `WebContentsView`'s size is driven by its own content (for example a toolbar owned by downstream code), run inside that view's own renderer process:
+A zero rectangle cannot tell a hidden view from one that is visible but currently 0×0. When that distinction matters, use the `Placement` API. It publishes `{ visible: true, bounds }` or `{ visible: false }` and adds opt-in scroll and geometry following:
+
+```ts
+import { createPlacementAnchor } from 'view-anchor'
+
+const handle = createPlacementAnchor(target, {
+  publish: (placement) => { ... },
+  followScroll: true,     // re-measure when any ancestor scrolls
+  followGeometry: true,   // poll animation frames during scrolls / drags, stop when steady
+  guardDisplayNone: true, // zero-area or display:none target → { visible: false }
+})
+
+handle.pulse() // open a short frame-following window, e.g. during a CSS transition
+```
+
+The React version is `usePlacementAnchor` from `view-anchor/react`.
+
+### Let content drive the size
+
+Sometimes the hosted surface's size should come from its own content, for example a toolbar rendered by downstream code. Run `createSizeAdvertiser` inside the hosted document. It reports the content size back so a DOM placeholder in the host can grow to match:
 
 ```ts
 import { createSizeAdvertiser } from 'view-anchor'
 
 const handle = createSizeAdvertiser(contentWrapper, {
-  axis: 'block',                 // this advertiser owns one axis only (block=height / inline=width)
+  axis: 'block',                 // one axis per advertiser: block = height, inline = width
   publish: (size) => { ... },    // receives { axis, extent }; wire IPC → host
 })
 
-handle.update(publish) // swap the publish channel and immediately report the current size
+handle.update(publish) // swap the publish channel and report the current size again
 handle.dispose()       // stop observing; never reports again
 ```
 
-> **Warning:** the `target` must shrink-to-fit on the owned axis — if its size is set by the hosted view instead, the cross-process loop cannot converge. See [docs/bidirectional-design.md](./docs/bidirectional-design.md).
+> **Warning:** the target must shrink to fit its content on the owned axis. If the host sets that size instead, the two sides keep reacting to each other and never settle. See [docs/bidirectional-design.md](./docs/bidirectional-design.md).
 
-### Versioned transport
+### Versioned transport across a boundary
 
-The core still accepts raw `Bounds`, `Placement`, and `AdvertisedSize` callbacks. When a process boundary needs validation and ordering, use the optional protocol entry:
+The core hands you plain `Bounds`, `Placement`, and `AdvertisedSize` values. Once those values cross a process or origin boundary, over IPC or `postMessage`, you usually want validation and ordering. The optional `view-anchor/protocol` entry adds versioned message envelopes, bounded decoding of untrusted input, a per-anchor sequence guard that drops stale messages, and a microtask batcher:
 
 ```ts
 import {
@@ -103,50 +143,55 @@ import {
   decodeGeometryWireValue,
 } from 'view-anchor/protocol'
 
+// sending side (renderer, iframe, ...)
 const batcher = createGeometryBatcher((batch) => ipc.send('geometry', batch))
 const publish = createPlacementMessagePublisher(
   { anchorId: 'editor', generation: 3 },
   batcher.publish,
 )
 
+// receiving side (main process, host page, ...)
 const decoded = decodeGeometryWireValue(received, { maxMessages: 100 })
-if (decoded.ok) { /* authorize the sender, then apply only newer messages */ }
+if (decoded.ok) { /* check the sender, then apply only newer messages */ }
 ```
 
-The publisher returned by `createPlacementMessagePublisher`/`createSizeMessagePublisher` must stay the SAME object for the life of one `{anchorId, generation}` (cache it with `useMemo`/`useRef` in React, not built inline on every render). The batcher and `createGeometrySequenceGuard` track a per-anchor sequence high-water mark; recreating a publisher at an unchanged address restarts its `seq` at 1 while that mark is already ahead, so its messages get dropped as stale. Bump `generation` when you need a genuinely new publisher. See [docs/protocol.md](./docs/protocol.md).
+Two rules keep the ordering correct:
 
-Returning `false` from a synchronous publisher means “not accepted”; the core retries the same geometry on the next trigger. A batching publisher returns `true` after queueing and owns later delivery retries. See [docs/protocol.md](./docs/protocol.md) for the complete contract.
+- **Keep one publisher per `{ anchorId, generation }`.** The batcher and `createGeometrySequenceGuard` remember the highest sequence number seen for each anchor. A publisher rebuilt for the same address restarts at sequence 1 and its messages are dropped as stale. In React, hold it in `useMemo` or `useRef`. Bump `generation` when you really want a fresh start.
+- **A synchronous publisher returns `false` to say "not accepted".** The core then retries the same geometry on the next trigger. A batching publisher returns `true` once queued and owns any later retries.
+
+The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 ## API
 
 | Export | Kind | Purpose |
 |---|---|---|
-| `createViewAnchor(target, opts)` | function | Imperative core: measure and publish live bounds. Zero rect means collapsed. |
-| `createPlacementAnchor(target, opts)` | function | Same core with explicit `Placement` visibility, plus opt-in `followScroll` / `followGeometry` / `guardDisplayNone` and `pulse()`. |
+| `createViewAnchor(target, opts)` | function | Measure a DOM element and publish live bounds. A zero rect means collapsed. |
+| `createPlacementAnchor(target, opts)` | function | Same core with explicit `Placement` visibility, opt-in `followScroll` / `followGeometry` / `guardDisplayNone`, and `pulse()`. |
 | `measurePlacement(target)` | function | Pure measurement: wraps the target rect as `{ visible: true, bounds }`. |
-| `useViewAnchor(opts)` from `view-anchor/react` | hook | React adapter returning a ref callback for a placeholder element. |
-| `usePlacementAnchor(opts)` from `view-anchor/react` | hook | React adapter for the explicit `Placement` API, including `followScroll` and `followGeometry`. |
-| `createSizeAdvertiser(target, opts)` | function | Reverse core: report the view's own content size to the host. |
+| `createSizeAdvertiser(target, opts)` | function | Reverse direction: report the view's own content size to the host. |
+| `useViewAnchor(opts)` from `view-anchor/react` | hook | Returns a ref callback for a placeholder element. |
+| `usePlacementAnchor(opts)` from `view-anchor/react` | hook | React adapter for the `Placement` API, including `followScroll` and `followGeometry`. |
 | `Bounds` | type | `{ x, y, width, height }` in CSS pixels. |
-| `Placement` | type | `{ visible: true; bounds } \| { visible: false }` — explicit visibility. |
-| `ViewAnchorOptions` / `ViewAnchorHandle` | type | Options and handle for the forward zero-rect core. |
-| `PlacementAnchorOptions` / `PlacementAnchorHandle` | type | Options and handle for the `Placement` core. |
-| `UseViewAnchorOptions` / `ViewAnchorRef` from `view-anchor/react` | type | Options and ref shape for the React adapter. |
-| `UsePlacementAnchorOptions` / `PlacementAnchorRef` from `view-anchor/react` | type | Options and ref shape for the explicit `Placement` React adapter. |
-| `AdvertisedAxis` / `AdvertisedSize` | type | Reverse axis and frame payload types. |
-| `SizeAdvertiserOptions` / `SizeAdvertiserHandle` | type | Options and handle for the reverse core. |
-| Exports from `view-anchor/protocol` | functions + types | Versioned messages, strict decoding, latest-wins guards, message publishers, and microtask batching. |
+| `Placement` | type | `{ visible: true; bounds } \| { visible: false }`. |
+| `ViewAnchorOptions` / `ViewAnchorHandle` | type | Options and handle for `createViewAnchor`. |
+| `PlacementAnchorOptions` / `PlacementAnchorHandle` | type | Options and handle for `createPlacementAnchor`. |
+| `UseViewAnchorOptions` / `ViewAnchorRef` from `view-anchor/react` | type | Options and ref shape for `useViewAnchor`. |
+| `UsePlacementAnchorOptions` / `PlacementAnchorRef` from `view-anchor/react` | type | Options and ref shape for `usePlacementAnchor`. |
+| `AdvertisedAxis` / `AdvertisedSize` | type | Axis and payload types for the reverse direction. |
+| `SizeAdvertiserOptions` / `SizeAdvertiserHandle` | type | Options and handle for `createSizeAdvertiser`. |
+| `view-anchor/protocol` | functions + types | Versioned messages, strict decoding, sequence guards, message publishers, and microtask batching. |
 
 ## Documentation
 
-- [docs/mechanism.mdx](./docs/mechanism.mdx) — the forward mechanism in depth: synchronous publishing and stale-frame safety, the `present` / zero-rect / unmount contract, React 18/19 StrictMode behavior. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
-- [docs/bidirectional-design.md](./docs/bidirectional-design.md) — the bidirectional geometry bridge: the intentional sync/RAF asymmetry, single-axis ownership and convergence, trust boundaries.
-- [docs/protocol.md](./docs/protocol.md) — versioned transport envelopes, validation, ordering, batching, and failure semantics.
-- [docs/performance-report.md](./docs/performance-report.md) — reproducible CPU, heap, RSS, extreme-case, V8, and tree-shaken export-size measurements.
+- [docs/mechanism.mdx](./docs/mechanism.mdx): how the forward direction works. Synchronous publishing, stale-frame safety, the `present` / zero-rect / unmount contract, StrictMode behaviour. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
+- [docs/bidirectional-design.md](./docs/bidirectional-design.md): running both directions at once. Why the forward path is synchronous while the reverse path uses animation frames, single-axis ownership, and where the trust boundary sits.
+- [docs/protocol.md](./docs/protocol.md): message envelopes, validation, ordering, batching, and what happens on failure.
+- [docs/performance-report.md](./docs/performance-report.md): reproducible CPU, heap, RSS, extreme-case, V8, and export-size measurements.
 
 ## Contributing
 
-Issues and pull requests are welcome. Before submitting, run the checks locally: `pnpm lint`, `pnpm check-types`, `pnpm test`, `pnpm build`. Run `pnpm benchmark` for the reproducible CPU, heap, RSS, and tree-shaken output report.
+Issues and pull requests are welcome. Before submitting, run `pnpm lint`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` regenerates the performance report.
 
 ## License
 

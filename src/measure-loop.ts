@@ -1,30 +1,11 @@
 /**
- * Internal — the RAF-coalesced measure/dedupe/dispose engine behind the REVERSE
- * primitive `createSizeAdvertiser`.
+ * Internal helper: animation-frame scheduling and deduplication loop for
+ * `createSizeAdvertiser`.
  *
- * The forward `createViewAnchor` deliberately does NOT use this: it publishes
- * SYNCHRONOUSLY (a native overlay's `setBounds` already lands a cross-process
- * frame late, and a RAF stacked a second frame of visible trailing). The
- * reverse direction is different — it is a cross-process FEEDBACK loop
- * (advertise → host resizes the view → content re-measures → re-advertise), so
- * the RAF's one-publish-per-frame coalescing is a useful damper. The two
- * directions thus have different optimal emit timing; this engine serves only
- * the reverse.
- *
- * NOT exported from the package: it is pure mechanism with no knowledge of
- * direction, the DOM, `ResizeObserver`, or the structure of the value `T` it
- * carries. The wrapping primitive injects `produce` / `same` / `sink` and
- * drives the lifecycle.
- *
- *   - `schedule()`  — coalesce a burst of triggers into ONE RAF; the frame
- *     body re-`produce()`s, dedupes against the last emit (`same`), and `sink`s.
- *     Bails if inactive or disposed (stale-RAF safe).
- *   - `emitNow(v)`  — explicit synchronous emit (create / update path). Always
- *     fires, bypassing the dedupe check, and refreshes the dedupe baseline.
- *   - `setActive`   — gate the observer stream; a queued frame bails on `!active`.
- *   - `cancel`      — drop any in-flight RAF.
- *   - `dispose`     — cancel + go inert; after dispose nothing emits again.
+ * Coalesces resize triggers into a single requestAnimationFrame, drops
+ * duplicate measurements, and manages disposal.
  */
+
 export interface MeasureLoop<T> {
   schedule(): void
   emitNow(value: T): void
@@ -34,9 +15,10 @@ export interface MeasureLoop<T> {
 }
 
 export function createMeasureLoop<T>(cfg: {
-  /** Produce the value to emit in the RAF body. Return `null` to decline the
-   *  frame entirely (no dedupe, no sink, baseline untouched) — e.g. a
-   *  non-finite or unavailable measurement. */
+  /**
+   * Produce the value to emit in the animation frame. Return null to skip
+   * the frame (e.g. for non-finite measurements).
+   */
   produce: () => T | null
   same: (a: T, b: T) => boolean
   sink: import('./types.js').Publisher<T>
@@ -48,9 +30,6 @@ export function createMeasureLoop<T>(cfg: {
   let last: T | null = null
   let publicationRevision = 0
 
-  // Set the baseline optimistically so synchronous re-entrancy sees the
-  // candidate. If the sink declines or throws, restore it only when an inner
-  // publish has not already established a newer baseline.
   const deliver = (value: T): boolean => {
     const previous = last
     const attempt = ++publicationRevision
@@ -72,16 +51,11 @@ export function createMeasureLoop<T>(cfg: {
     }
   }
 
-  // Keep one callback identity for every scheduled frame. The mutable state it
-  // reads is already owned by this loop, so a fresh closure per frame adds no
-  // isolation while creating avoidable short-lived allocations.
   const frame = (): void => {
     rafId = null
     if (disposed || !active) return
     const value = produce()
-    if (value === null) return // producer declined this frame
-    // last-value dedupe: a frame whose produced value equals the last one
-    // we emitted costs nothing (no IPC / setBounds).
+    if (value === null) return
     if (last !== null && same(value, last)) return
     deliver(value)
   }

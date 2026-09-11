@@ -1,21 +1,21 @@
-# view-anchor 通信协议
+# 通信协议
 
-`view-anchor` 的核心 API 只负责测量和调用同步 `publish`。可选入口 `view-anchor/protocol` 负责跨进程消息的版本、运行时校验、时序和批处理；它不绑定 Electron，也不替宿主做发送方授权。
+`view-anchor` 核心模块只负责测量并同步调用 `publish`。如果需要在进程或 iframe 边界上传输几何数据，可以使用可选的 `view-anchor/protocol` 模块。它提供带版本的消息结构、输入校验、消息防乱序和微任务批处理，不绑定具体的传输通道。
 
-## 消息
+## 消息结构
 
-单条消息包含：
+协议消息包含以下字段：
 
-- `v: 1`：协议版本；未知版本直接拒绝。
-- `kind`：`placement` 或 `size`。
-- `anchorId`：宿主分配的逻辑锚点标识。
-- `generation`：锚点重建时递增，隔离旧实例的迟到消息。
-- `seq`：同一发布器内逐次递增。
-- `placement` 或 `size`：原始几何载荷。
+- `v: 1`：协议版本，非支持版本直接拒绝。
+- `kind`：消息类型，`placement` 或 `size`。
+- `anchorId`：锚点的唯一逻辑标识符。
+- `generation`：代次编号。锚点重建或需要完全重置序列时递增，用于丢弃上一代残留的迟到消息。
+- `seq`：同一 publisher 内单调递增的序列号。
+- `placement` 或 `size`：具体的位置或尺寸数据。
 
-`generation` 对同一 `anchorId` 的所有消息类型生效：任一类型进入新代后，其他类型的旧代消息也会被拒绝。placement 与 size 发布器必须使用同一代次。`generation` 和 `seq` 只解决顺序，不是身份凭据。IPC 接收方必须先根据通道上下文校验 `senderFrame`、origin 或 capability token，并确认该发送方有权操作对应 `anchorId`。
+`generation` 作用于同一个 `anchorId`：一旦接收到新一代的消息，所有该锚点的旧代消息都会被直接丢弃。`generation` 与 `seq` 只负责保证消息顺序，不作为鉴权凭据。接收端依然应当在分发前验证发送方身份（如校验 `senderFrame`、域名或访问令牌）。
 
-## 发送
+## 发送端
 
 ```ts
 import {
@@ -25,20 +25,23 @@ import {
 
 const batcher = createGeometryBatcher(
   (batch) => ipc.send('geometry', batch),
-  { onError: reportTransportError },
+  { onError: (err) => console.error(err) },
 )
 
 const publish = createPlacementMessagePublisher(
-  { anchorId: 'editor', generation: 3 },
+  { anchorId: 'editor', generation: 1 },
   batcher.publish,
 )
 ```
 
-`createPlacementMessagePublisher` 和 `createSizeMessagePublisher` 为每次尝试分配新的 `seq`，即使发送方返回 `false` 或抛错也不复用序号。**发布器对象必须在同一个 `{anchorId, generation}` 内保持稳定**（React 里用 `useMemo`/`useRef` 缓存，不要在渲染中内联新建）：批处理器和接收端的 `createGeometrySequenceGuard` 都按 `anchorId` 记录每种消息类型的序号高水位，重建发布器会让新实例的 `seq` 从 1 重新计数，而高水位已经领先，新实例除非序号追上，否则消息会被当作过期直接丢弃。需要新的发布器实例时，必须同时递增 `generation`。
+使用 publisher 时需注意两点：
 
-`createGeometryBatcher` 在当前任务末尾用一个 microtask 发送，不叠加渲染帧延迟。它按 `anchorId + kind` 合并，只保留更新的 `generation/seq`。下游发送返回 `false` 或抛错时，快照留在队列中；下一条有效消息或显式 `flush()` 会重试。所有下游 `send` 抛错（包括显式 `flush()`）都会由可选 `onError` 接收，且 `flush()` 返回 `false`；未提供 `onError` 时同样不会向调用方抛出。锚点销毁时调用 `clear(anchorId)` 释放它的队列和高水位；`clear()` 清理全部锚点但保留批处理器，`dispose()` 则永久停用它。
+1. **每个 `{ anchorId, generation }` 保持单个 publisher 实例**。在 React 中应使用 `useMemo` 或 `useRef` 保存，不要在每次渲染时重新创建。接收端的 `createGeometrySequenceGuard` 会记录见过的最大序列号；如果在同一代次下重建 publisher，序列号会从 1 重新计数，导致新发出的消息被当成过期消息丢弃。确实需要重置时，请将 `generation` 加一。
+2. **批处理与重试**。`createGeometryBatcher` 会在当前微任务中合并同一事件循环内的多次更新，每个锚点只保留最新的一条。如果下游发送失败或抛出异常，未成功发送的消息会保留在队列中，等待下次调用或显式 `flush()` 时重试。
 
-## 接收
+当锚点销毁时，可以调用 `batcher.clear(anchorId)` 清理对应队列；调用 `dispose()` 会彻底停用批处理器。
+
+## 接收端
 
 ```ts
 import {
@@ -46,7 +49,7 @@ import {
   decodeGeometryWireValue,
 } from 'view-anchor/protocol'
 
-const order = createGeometrySequenceGuard()
+const guard = createGeometrySequenceGuard()
 const result = decodeGeometryWireValue(event.payload, { maxMessages: 100 })
 
 if (result.ok) {
@@ -56,17 +59,21 @@ if (result.ok) {
 
   for (const message of messages) {
     if (
-      authorize(event.senderFrame, message.anchorId) &&
-      order.accept(message)
-    ) applyGeometry(message)
+      isAuthorized(event.senderFrame, message.anchorId) &&
+      guard.accept(message)
+    ) {
+      applyGeometry(message)
+    }
   }
 }
 ```
 
-解码器接收 `unknown`，不抛异常，并拒绝未知版本/类型、非法整数、负尺寸、非有限数值、无效载荷和超过 `maxMessages` 的批次。宿主仍需按自己的 viewport 和策略限制最终尺寸；解码通过不等于发送方已获授权。
+`decodeGeometryWireValue` 接收 `unknown` 类型的原始数据，执行严格的类型和边界检查（包括整数范围、非负尺寸、批次大小限制等），不会向外抛出异常。
 
-## 发布失败契约
+## publish 回调的同步约定
 
-所有核心 `Publisher<T>` 都是同步函数：返回 `false` 表示没有接收，返回 `true` 或 `void` 表示已接收。核心只有在接收成功后才保留去重基线，因此失败值可在下次观察触发时重试；抛出的异常会原样传给调用方。Promise 不属于这个边界，异步发送应先把值可靠地放入调用方自己的队列，再同步报告是否入队成功。
+所有 `Publisher<T>` 均为同步函数：
+- 返回 `true` 或 `void`：表示数据已成功接收或已加入发送队列。
+- 返回 `false`：表示当前未接收。核心会在下一次测量触发时重新尝试该值。
 
-为了兼容现有调用方，`view-anchor` 根入口仍发布原始 `Bounds`、`Placement` 和 `AdvertisedSize`；只有显式使用 `view-anchor/protocol` 才会加消息外壳。
+如果底层传输是异步的（例如异步 IPC 或网络请求），应当先在同步回调中将消息放入本地发送队列并返回 `true`，后续的重试由发送队列自行管理。

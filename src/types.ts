@@ -1,23 +1,8 @@
 /**
- * view-anchor — sync a main-process native view's bounds to a DOM element.
- *
- * Self-contained, engine-agnostic primitive. It knows nothing about
- * Electron (the `publish` callback owns the IPC → `setBounds`), nothing
- * about React (the core is imperative; see `react.ts` for the adapter),
- * and nothing about the host layout engine (the `target` element may come
- * from our own `compile`/`FrameTree`, or a dockview panel's
- * `content.element`; the mechanism is identical).
- *
- * It is the modern, alive replacement for the archived
- * `react-electron-browser-view`: the cross-process bridge that DOM layout
- * libraries (dockview included) deliberately do not provide. dockview's
- * internal `OverlayRenderContainer` does the same getBoundingClientRect →
- * RAF → reposition dance, but its follower is a DOM node; ours is a native
- * `WebContentsView` positioned via the injected `publish`.
+ * Core geometry and transport types for view-anchor.
  */
 
-/** A screen-space rectangle, in CSS pixels. Structurally compatible with
- *  the host's `ViewBounds` so a publisher typed against either works. */
+/** A screen-space rectangle in CSS pixels. */
 export interface Bounds {
   x: number
   y: number
@@ -25,26 +10,20 @@ export interface Bounds {
   height: number
 }
 
-/** `false` declines a value synchronously; `true` and `void` accept it. */
+/** Returning false declines a value; true and void accept it. */
 export type PublishResult = void | boolean
 
 /**
- * A synchronous transport boundary. A batching transport returns `true` once
- * it has accepted the value into its own queue; later delivery and retry
- * remain the transport's responsibility.
+ * Synchronous publish callback. A batching transport returns true once
+ * the value is queued; subsequent delivery is handled by the transport.
  */
 export type Publisher<T> = (value: T) => PublishResult
 
 /**
- * Explicit visibility + geometry for a native view, replacing the legacy
- * magic-`{0,0,0,0}` "hidden" convention (`present:false → ZERO bounds`).
+ * Explicit visibility and bounds for an anchored view.
  *
- * Visibility is a DISCRIMINANT, never inferred from geometry. The whole
- * reason this type exists: a genuinely zero-SIZED but on-screen view
- * (`{ visible:true, bounds:{...,width:0,height:0} }`) is now distinct from a
- * detached/hidden one (`{ visible:false }`, which carries no `bounds` at
- * all). Under the old ZERO convention both collapsed to the same value and
- * were indistinguishable.
+ * Distinguishes an intentionally visible but zero-sized element ({ visible: true, bounds: 0x0 })
+ * from a hidden or detached element ({ visible: false }).
  */
 export type Placement =
   | { visible: true; bounds: Bounds }
@@ -52,82 +31,48 @@ export type Placement =
 
 export interface ViewAnchorOptions {
   /**
-   * Whether the native view should be attached. When `false`, the anchor
-   * publishes zero bounds (`{0,0,0,0}`) — the host treats `width === 0 ||
-   * height === 0` as "detach the child view but keep its WebContents
-   * alive" (detach-but-keep-alive). No DOM measurement is needed in this
-   * state.
+   * Whether the native view should be attached. When false, publishes
+   * zero bounds ({ x: 0, y: 0, width: 0, height: 0 }) so the host can detach
+   * the view while keeping its instance alive.
    */
   present: boolean
-  /** Receives the live rect, or `{0,0,0,0}` when detached. Owns IPC. */
+  /** Receives the live rect, or zero bounds when detached. */
   publish: Publisher<Bounds>
 }
 
 export interface ViewAnchorHandle {
-  /**
-   * Apply new options. Re-publishes immediately to reflect the new state
-   * (present=true → measure + observe; present=false → zero bounds).
-   */
+  /** Apply new options and re-publish immediately. */
   update(opts: ViewAnchorOptions): void
-  /** Stop observing and remove listeners. After dispose the anchor never
-   *  publishes again (every emit reads `disposed` synchronously, so there is
-   *  no queued frame that could fire late). */
+  /** Stop observing and clean up listeners. After disposal no further values are published. */
   dispose(): void
 }
 
-// ── Reverse direction: size advertiser ───────────────────────────────
+// --- Reverse direction: size advertiser ---
 //
-// The mirror of the forward anchor. Runs in a DOWNSTREAM WebContentsView's own
-// renderer: it measures the content's own size and advertises it to the host,
-// which sizes the placeholder accordingly (and the forward anchor then keeps the
-// view positioned). One advertiser owns exactly ONE axis — the other axis is a
-// host-driven, read-only input — so the cross-process loop stays a one-way DAG.
+// Runs in a downstream document to report content size back to the host,
+// allowing the host's DOM placeholder to match the content.
 
-/** Which axis this advertiser owns. `block` = height, `inline` = width
- *  (logical-property naming, axis-agnostic to writing mode). */
+/** Which axis this advertiser reports: 'block' (height) or 'inline' (width). */
 export type AdvertisedAxis = 'block' | 'inline'
 
-/**
- * One frame of advertised size. A pure scalar plus the owning axis — there is
- * deliberately no field for the *other* axis, so "advertise two axes" is not
- * expressible (single-axis ownership is enforced in the type, not at runtime).
- */
+/** One frame of advertised size on the owned axis. */
 export interface AdvertisedSize {
-  /** Mirrors the factory's `axis`; constant across frames. Lets the host
-   *  whitelist-check the axis it is willing to accept. */
+  /** The axis this advertiser reports ('block' or 'inline'). */
   readonly axis: AdvertisedAxis
-  /** The owned axis's content extent, in CSS px — already rounded and clamped
-   *  to `>= 0`. */
+  /** The content extent in CSS pixels, rounded and non-negative. */
   readonly extent: number
 }
 
 export interface SizeAdvertiserOptions {
-  /** The single axis this advertiser owns. Fixed for the advertiser's life. */
+  /** The single axis this advertiser owns. Fixed for the advertiser's lifetime. */
   axis: AdvertisedAxis
-  /** Receives each advertised size. Owns the IPC/postMessage → host. Mirrors
-   *  the forward `publish` (same role: the injected, transport-owning sink). */
+  /** Receives each advertised size. */
   publish: Publisher<AdvertisedSize>
 }
 
 export interface SizeAdvertiserHandle {
-  /**
-   * Swap the `publish` sink (e.g. a new IPC channel) and immediately
-   * re-advertise the current size to it (mirrors the forward anchor's
-   * re-publish on update), so the new channel is not left sizeless until the
-   * next `ResizeObserver` tick.
-   *
-   * Takes only the new sink — `axis` is immutable by construction, so it is
-   * deliberately not expressible here (you cannot attempt to change it). To
-   * advertise a different axis, dispose and create a new advertiser.
-   */
+  /** Swap the publish callback and re-advertise the current size immediately. */
   update(publish: Publisher<AdvertisedSize>): void
-  /**
-   * Stop observing, cancel any pending RAF. After dispose nothing is
-   * advertised again. (There is no ZERO/terminal value — collapsing is the
-   * host's policy, unlike the forward anchor's `present:false`.)
-   *
-   * The first advertised value is asynchronous: it awaits the observer's first
-   * frame, and a `display:none` target advertises nothing until shown.
-   */
+  /** Stop observing and cancel any pending animation frame. */
   dispose(): void
 }
