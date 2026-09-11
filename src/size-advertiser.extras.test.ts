@@ -134,6 +134,18 @@ describe('createSizeAdvertiser — update() re-advertises current value', () => 
     expect(second).toHaveBeenCalledTimes(1)
     expect(second).toHaveBeenCalledWith({ axis: 'block', extent: 120 })
   })
+
+  it('re-advertises a measured zero instead of treating it as no value', () => {
+    const first = vi.fn<(s: AdvertisedSize) => void>()
+    const second = vi.fn<(s: AdvertisedSize) => void>()
+    const handle = createSizeAdvertiser(el(), { axis: 'block', publish: first })
+
+    obs().fire(0, 0)
+    flushRafs()
+    handle.update(second)
+
+    expect(second).toHaveBeenCalledWith({ axis: 'block', extent: 0 })
+  })
 })
 
 // ── update() with no size yet does not emit ───────────────────────────────

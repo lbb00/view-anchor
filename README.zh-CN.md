@@ -22,6 +22,7 @@
 - **收起而不销毁** —— `present: false` 发布零矩形并停止观察；宿主可以摘除子视图但保留 `WebContents` 存活。
 - **显式可见性** —— `Placement` API 能区分「真正 0×0 但在屏」和「隐藏」的视图，而不是从尺寸推断可见性。
 - **反向：内容尺寸回流** —— `createSizeAdvertiser` 把视图自身内容的尺寸回报给宿主，让 DOM 占位跟着内容长。
+- **可选通信协议** —— `view-anchor/protocol` 提供带版本的消息、运行时解码、只收最新帧和微任务批处理，同时不让核心绑定 Electron。
 - **React 适配层** —— `useViewAnchor` hook，挂到一个占位元素上即可。
 - **核心零依赖** —— 核心不 import React、Electron 或任何布局引擎。
 
@@ -33,7 +34,7 @@ pnpm add view-anchor
 npm install view-anchor
 ```
 
-React 是可选 peer 依赖，只有用 `useViewAnchor` 适配层时才需要。
+React 是可选 peer 依赖。React Hook 要从 `view-anchor/react` 导入；核心入口 `view-anchor` 不依赖 React 运行时。
 
 ## 快速上手
 
@@ -54,7 +55,7 @@ handle.dispose()                    // 停止观察；此后不再发布
 ### React
 
 ```tsx
-import { useViewAnchor } from 'view-anchor'
+import { useViewAnchor } from 'view-anchor/react'
 
 function DebugPanel({ visible }: { visible: boolean }) {
   const ref = useViewAnchor({
@@ -66,6 +67,8 @@ function DebugPanel({ visible }: { visible: boolean }) {
   return <div ref={ref} className="h-full w-full" />
 }
 ```
+
+需要显式 `Placement` 可见性以及自动跟随滚动或几何变化时，也从该入口导入 `usePlacementAnchor`。
 
 ### 反向：内容尺寸上报
 
@@ -85,6 +88,29 @@ handle.dispose()       // 停止观察；此后不再上报
 
 > **注意 footgun**：`target` 必须在主导轴上 shrink-to-fit——如果它的尺寸由宿主灌入的视图尺寸反向决定，跨进程环不会收敛。详见 [docs/bidirectional-design.md](./docs/bidirectional-design.md)。
 
+### 带版本的通信
+
+核心仍然支持直接传递 `Bounds`、`Placement` 和 `AdvertisedSize`。跨进程通信需要校验和时序控制时，使用可选协议入口：
+
+```ts
+import {
+  createGeometryBatcher,
+  createPlacementMessagePublisher,
+  decodeGeometryWireValue,
+} from 'view-anchor/protocol'
+
+const batcher = createGeometryBatcher((batch) => ipc.send('geometry', batch))
+const publish = createPlacementMessagePublisher(
+  { anchorId: 'editor', generation: 3 },
+  batcher.publish,
+)
+
+const decoded = decodeGeometryWireValue(received, { maxMessages: 100 })
+if (decoded.ok) { /* 先校验发送方身份，再只应用较新的消息 */ }
+```
+
+同步 `publish` 返回 `false` 表示“未接收”，核心会在下一次触发时重试相同几何值。批处理发布器在入队后返回 `true`，后续投递重试由它负责。完整契约见 [docs/protocol.md](./docs/protocol.md)。
+
 ## API
 
 | 导出 | 类型 | 作用 |
@@ -92,24 +118,29 @@ handle.dispose()       // 停止观察；此后不再上报
 | `createViewAnchor(target, opts)` | 函数 | 正向命令式核心：测量并发布实时边界。零矩形表示收起。 |
 | `createPlacementAnchor(target, opts)` | 函数 | 同款核心的显式 `Placement` 变体，另有 opt-in 的 `followScroll` / `followGeometry` / `guardDisplayNone` 与 `pulse()`。 |
 | `measurePlacement(target)` | 函数 | 纯测量：把目标矩形包成 `{ visible: true, bounds }`。 |
-| `useViewAnchor(opts)` | Hook | React 适配层，返回挂占位元素的 ref 回调。 |
+| 从 `view-anchor/react` 导入的 `useViewAnchor(opts)` | Hook | React 适配层，返回挂占位元素的 ref 回调。 |
+| 从 `view-anchor/react` 导入的 `usePlacementAnchor(opts)` | Hook | 显式 `Placement` API 的 React 适配层，支持 `followScroll` 和 `followGeometry`。 |
 | `createSizeAdvertiser(target, opts)` | 函数 | 反向核心：把视图自身内容尺寸回报给宿主。 |
 | `Bounds` | 类型 | `{ x, y, width, height }`，单位 CSS 像素。 |
 | `Placement` | 类型 | `{ visible: true; bounds } \| { visible: false }` —— 显式可见性。 |
 | `ViewAnchorOptions` / `ViewAnchorHandle` | 类型 | 正向零矩形核心的选项与句柄形状。 |
 | `PlacementAnchorOptions` / `PlacementAnchorHandle` | 类型 | `Placement` 核心的选项与句柄形状。 |
-| `UseViewAnchorOptions` / `ViewAnchorRef` | 类型 | React 适配层的选项与 ref 形状。 |
+| 从 `view-anchor/react` 导入的 `UseViewAnchorOptions` / `ViewAnchorRef` | 类型 | React 适配层的选项与 ref 形状。 |
+| 从 `view-anchor/react` 导入的 `UsePlacementAnchorOptions` / `PlacementAnchorRef` | 类型 | 显式 `Placement` React 适配层的选项与 ref 形状。 |
 | `AdvertisedAxis` / `AdvertisedSize` | 类型 | 反向的轴与帧载荷类型。 |
 | `SizeAdvertiserOptions` / `SizeAdvertiserHandle` | 类型 | 反向核心的选项与句柄形状。 |
+| 从 `view-anchor/protocol` 导出的函数与类型 | 函数 + 类型 | 带版本消息、严格解码、只收最新帧、消息发布器和微任务批处理。 |
 
 ## 文档
 
-- [docs/mechanism.mdx](./docs/mechanism.mdx) —— 正向机制的完整说明：同步发布与陈旧帧安全、`present` / 零矩形 / 卸载契约、React 18 StrictMode 行为。内含可交互 3D 演示 [docs/index.html](./docs/index.html)。
+- [docs/mechanism.mdx](./docs/mechanism.mdx) —— 正向机制的完整说明：同步发布与陈旧帧安全、`present` / 零矩形 / 卸载契约、React 18/19 StrictMode 行为。内含可交互 3D 演示 [docs/index.html](./docs/index.html)。
 - [docs/bidirectional-design.md](./docs/bidirectional-design.md) —— 双向几何桥：同步 / RAF 的刻意不对称、单轴所有权与收敛性、信任边界。
+- [docs/protocol.md](./docs/protocol.md) —— 带版本的传输消息、校验、时序、批处理和失败语义。
+- [docs/performance-report.md](./docs/performance-report.md) —— 可重复的 CPU、堆内存、极端场景和 tree-shaking 后导出体积报告。
 
 ## 贡献
 
-欢迎提 issue 和 PR。提交前请在本地跑一遍：`pnpm lint`、`pnpm check-types`、`pnpm test`、`pnpm build`。
+欢迎提 issue 和 PR。提交前请在本地跑一遍：`pnpm lint`、`pnpm check-types`、`pnpm test`、`pnpm build`。运行 `pnpm benchmark` 可重新生成 CPU、堆内存和 tree-shaking 后代码体积报告。
 
 ## License
 

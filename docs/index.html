@@ -332,18 +332,33 @@ var __viewAnchorCore = (() => {
     let publish = opts.publish;
     let observer = null;
     let lastPublished = null;
+    let publicationRevision = 0;
     let disposed = false;
     const measure = () => {
       const r = target.getBoundingClientRect();
+      if (!Number.isFinite(r.left) || !Number.isFinite(r.top) || !Number.isFinite(r.width) || !Number.isFinite(r.height)) return null;
       return clampRect({ x: r.left, y: r.top, width: r.width, height: r.height });
     };
     const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+    const publishCandidate = (candidate) => {
+      const previous = lastPublished;
+      const attempt = ++publicationRevision;
+      lastPublished = candidate;
+      try {
+        const accepted = publish(candidate) !== false;
+        if (!accepted && publicationRevision === attempt) lastPublished = previous;
+        return accepted;
+      } catch (error) {
+        if (publicationRevision === attempt) lastPublished = previous;
+        throw error;
+      }
+    };
     const emit = () => {
       if (disposed || !present) return;
       const m = measure();
+      if (!m) return;
       if (lastPublished && sameRect(lastPublished, m)) return;
-      lastPublished = m;
-      publish(m);
+      publishCandidate(m);
     };
     const startObserving = () => {
       if (observer) return;
@@ -362,11 +377,11 @@ var __viewAnchorCore = (() => {
       lastPublished = null;
       if (present) {
         startObserving();
-        lastPublished = measure();
-        publish(lastPublished);
+        const measured = measure();
+        if (measured) publishCandidate(measured);
       } else {
         stopObserving();
-        publish(ZERO);
+        publishCandidate(ZERO);
       }
     };
     apply();
@@ -401,32 +416,54 @@ var __viewAnchorCore = (() => {
   function createPlacementAnchor(target, opts) {
     let visible = opts.visible;
     let publish = opts.publish;
-    const guardDisplayNone = opts.guardDisplayNone ?? false;
-    const followScroll = opts.followScroll ?? false;
-    const followGeometry = opts.followGeometry ?? false;
+    let guardDisplayNone = opts.guardDisplayNone ?? false;
+    let followScroll = opts.followScroll ?? false;
+    let followGeometry = opts.followGeometry ?? false;
     let observer = null;
     let io = null;
+    let scrollListening = false;
+    let geometryListening = false;
+    const capture = { capture: true };
+    const passiveCapture = { capture: true, passive: true };
     let lastPublished = null;
+    let publicationRevision = 0;
     let disposed = false;
     let rafId = null;
     let steadyFrames = 0;
     const STEADY_CLOSE_FRAMES = 2;
     const MAX_HIDDEN_FOLLOW_FRAMES = 30;
+    const MAX_INVALID_FOLLOW_FRAMES = 30;
+    let invalidFrames = 0;
     let pointerHeld = false;
+    let activePointerId = null;
     let sentinelDeadline = null;
     const computePlacement = () => {
       const p = measurePlacement(target);
+      if (p.visible && (!Number.isFinite(p.bounds.x) || !Number.isFinite(p.bounds.y) || !Number.isFinite(p.bounds.width) || !Number.isFinite(p.bounds.height))) return null;
       if (guardDisplayNone && p.visible && (p.bounds.width === 0 || p.bounds.height === 0)) {
         return { visible: false };
       }
       return p;
     };
+    const publishCandidate = (candidate) => {
+      const previous = lastPublished;
+      const attempt = ++publicationRevision;
+      lastPublished = candidate;
+      try {
+        const accepted = publish(candidate) !== false;
+        if (!accepted && publicationRevision === attempt) lastPublished = previous;
+        return accepted;
+      } catch (error) {
+        if (publicationRevision === attempt) lastPublished = previous;
+        throw error;
+      }
+    };
     const emit = () => {
       if (disposed || !visible) return;
       const p = computePlacement();
+      if (!p) return;
       if (lastPublished && samePlacement(lastPublished, p)) return;
-      lastPublished = p;
-      publish(p);
+      publishCandidate(p);
     };
     const shouldCloseOnHiddenPoll = () => {
       if (lastPublished?.visible === false) return true;
@@ -443,12 +480,29 @@ var __viewAnchorCore = (() => {
         return;
       }
       const p = computePlacement();
+      if (!p) {
+        if (invalidFrames++ >= MAX_INVALID_FOLLOW_FRAMES) {
+          sentinelDeadline = null;
+          return;
+        }
+        if (!disposed && visible && followGeometry) {
+          rafId = requestAnimationFrame(sentinelFrame);
+        } else {
+          sentinelDeadline = null;
+        }
+        return;
+      }
+      invalidFrames = 0;
       if (!p.visible) {
         if (shouldCloseOnHiddenPoll()) {
           sentinelDeadline = null;
           return;
         }
-        rafId = requestAnimationFrame(sentinelFrame);
+        if (!disposed && visible && followGeometry) {
+          rafId = requestAnimationFrame(sentinelFrame);
+        } else {
+          sentinelDeadline = null;
+        }
         return;
       }
       if (lastPublished && samePlacement(lastPublished, p)) {
@@ -458,11 +512,10 @@ var __viewAnchorCore = (() => {
           return;
         }
       } else {
-        lastPublished = p;
-        publish(p);
+        publishCandidate(p);
         steadyFrames = 0;
       }
-      if (!disposed && visible) {
+      if (!disposed && visible && followGeometry) {
         rafId = requestAnimationFrame(sentinelFrame);
       } else {
         sentinelDeadline = null;
@@ -471,7 +524,10 @@ var __viewAnchorCore = (() => {
     const openSentinel = () => {
       if (!followGeometry || disposed) return;
       steadyFrames = 0;
-      if (rafId === null) rafId = requestAnimationFrame(sentinelFrame);
+      if (rafId === null) {
+        invalidFrames = 0;
+        rafId = requestAnimationFrame(sentinelFrame);
+      }
     };
     const closeSentinel = () => {
       if (rafId !== null) {
@@ -479,8 +535,10 @@ var __viewAnchorCore = (() => {
         rafId = null;
       }
       steadyFrames = 0;
+      invalidFrames = 0;
       sentinelDeadline = null;
       pointerHeld = false;
+      activePointerId = null;
     };
     const onScroll = () => {
       if (followGeometry) openSentinel();
@@ -489,67 +547,105 @@ var __viewAnchorCore = (() => {
     const onPointerDown = (e) => {
       const t = e.target;
       if (t && t.closest && t.closest('[role="separator"]')) {
+        if (!pointerHeld) activePointerId = e.pointerId;
         pointerHeld = true;
         openSentinel();
       }
     };
-    const onPointerUp = () => {
+    const releasePointer = (e) => {
       if (!pointerHeld) return;
+      if (e && activePointerId !== e.pointerId) return;
       pointerHeld = false;
+      activePointerId = null;
       openSentinel();
+    };
+    const onPointerUp = (e) => {
+      releasePointer(e);
+    };
+    const onPointerCancel = (e) => {
+      releasePointer(e);
+    };
+    const onWindowBlur = () => {
+      releasePointer();
+    };
+    const startOptionalObserving = () => {
+      if (guardDisplayNone && !io && typeof IntersectionObserver !== "undefined") {
+        io = new IntersectionObserver(emit);
+        io.observe(target);
+      }
+      if (followScroll && !scrollListening) {
+        window.addEventListener("scroll", onScroll, passiveCapture);
+        scrollListening = true;
+      }
+      if (followGeometry && !geometryListening) {
+        window.addEventListener("pointerdown", onPointerDown, capture);
+        window.addEventListener("pointerup", onPointerUp, capture);
+        window.addEventListener("pointercancel", onPointerCancel, capture);
+        window.addEventListener("blur", onWindowBlur);
+        geometryListening = true;
+      }
+    };
+    const stopOptionalObserving = () => {
+      if (io && !guardDisplayNone) {
+        io.disconnect();
+        io = null;
+      }
+      if (scrollListening && !followScroll) {
+        window.removeEventListener("scroll", onScroll, passiveCapture);
+        scrollListening = false;
+      }
+      if (geometryListening && !followGeometry) {
+        window.removeEventListener("pointerdown", onPointerDown, capture);
+        window.removeEventListener("pointerup", onPointerUp, capture);
+        window.removeEventListener("pointercancel", onPointerCancel, capture);
+        window.removeEventListener("blur", onWindowBlur);
+        geometryListening = false;
+        closeSentinel();
+      }
+    };
+    const stopAllOptionalObserving = () => {
+      if (io) {
+        io.disconnect();
+        io = null;
+      }
+      if (scrollListening) {
+        window.removeEventListener("scroll", onScroll, passiveCapture);
+        scrollListening = false;
+      }
+      if (geometryListening) {
+        window.removeEventListener("pointerdown", onPointerDown, capture);
+        window.removeEventListener("pointerup", onPointerUp, capture);
+        window.removeEventListener("pointercancel", onPointerCancel, capture);
+        window.removeEventListener("blur", onWindowBlur);
+        geometryListening = false;
+      }
+      closeSentinel();
     };
     const startObserving = () => {
       if (observer) return;
       observer = new ResizeObserver(emit);
       observer.observe(target);
       window.addEventListener("resize", emit);
-      if (guardDisplayNone && typeof IntersectionObserver !== "undefined") {
-        io = new IntersectionObserver(emit);
-        io.observe(target);
-      }
-      if (followScroll) {
-        window.addEventListener("scroll", onScroll, {
-          capture: true,
-          passive: true
-        });
-      }
-      if (followGeometry) {
-        window.addEventListener("pointerdown", onPointerDown, { capture: true });
-        window.addEventListener("pointerup", onPointerUp, { capture: true });
-      }
+      startOptionalObserving();
     };
     const stopObserving = () => {
       if (observer) {
         observer.disconnect();
         observer = null;
       }
-      if (io) {
-        io.disconnect();
-        io = null;
-      }
       window.removeEventListener("resize", emit);
-      window.removeEventListener("scroll", onScroll, {
-        capture: true
-      });
-      window.removeEventListener("pointerdown", onPointerDown, {
-        capture: true
-      });
-      window.removeEventListener("pointerup", onPointerUp, {
-        capture: true
-      });
-      closeSentinel();
+      stopAllOptionalObserving();
     };
     const apply = () => {
       lastPublished = null;
       if (visible) {
         startObserving();
-        lastPublished = computePlacement();
-        publish(lastPublished);
+        const placement = computePlacement();
+        if (placement) publishCandidate(placement);
       } else {
         stopObserving();
         const hidden = { visible: false };
-        lastPublished = hidden;
-        publish(hidden);
+        publishCandidate(hidden);
       }
     };
     apply();
@@ -558,6 +654,13 @@ var __viewAnchorCore = (() => {
         if (disposed) return;
         publish = next.publish;
         visible = next.visible;
+        guardDisplayNone = next.guardDisplayNone ?? false;
+        followScroll = next.followScroll ?? false;
+        followGeometry = next.followGeometry ?? false;
+        if (visible && observer) {
+          stopOptionalObserving();
+          startOptionalObserving();
+        }
         apply();
       },
       dispose() {

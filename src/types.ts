@@ -25,6 +25,16 @@ export interface Bounds {
   height: number
 }
 
+/** `false` declines a value synchronously; `true` and `void` accept it. */
+export type PublishResult = void | boolean
+
+/**
+ * A synchronous transport boundary. A batching transport returns `true` once
+ * it has accepted the value into its own queue; later delivery and retry
+ * remain the transport's responsibility.
+ */
+export type Publisher<T> = (value: T) => PublishResult
+
 /**
  * Explicit visibility + geometry for a native view, replacing the legacy
  * magic-`{0,0,0,0}` "hidden" convention (`present:false → ZERO bounds`).
@@ -50,7 +60,7 @@ export interface ViewAnchorOptions {
    */
   present: boolean
   /** Receives the live rect, or `{0,0,0,0}` when detached. Owns IPC. */
-  publish: (bounds: Bounds) => void
+  publish: Publisher<Bounds>
 }
 
 export interface ViewAnchorHandle {
@@ -96,7 +106,7 @@ export interface SizeAdvertiserOptions {
   axis: AdvertisedAxis
   /** Receives each advertised size. Owns the IPC/postMessage → host. Mirrors
    *  the forward `publish` (same role: the injected, transport-owning sink). */
-  publish: (size: AdvertisedSize) => void
+  publish: Publisher<AdvertisedSize>
 }
 
 export interface SizeAdvertiserHandle {
@@ -110,7 +120,7 @@ export interface SizeAdvertiserHandle {
    * deliberately not expressible here (you cannot attempt to change it). To
    * advertise a different axis, dispose and create a new advertiser.
    */
-  update(publish: (size: AdvertisedSize) => void): void
+  update(publish: Publisher<AdvertisedSize>): void
   /**
    * Stop observing, cancel any pending RAF. After dispose nothing is
    * advertised again. (There is no ZERO/terminal value — collapsing is the

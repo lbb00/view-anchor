@@ -1,5 +1,6 @@
 import type {
   AdvertisedSize,
+  Publisher,
   SizeAdvertiserOptions,
   SizeAdvertiserHandle,
 } from './types.js'
@@ -9,8 +10,8 @@ import { createMeasureLoop } from './measure-loop.js'
  * Reverse of `createViewAnchor`: runs in a downstream WebContentsView's own
  * renderer, measures the content's own size on ONE owned axis (from the
  * `ResizeObserver` border-box — no `getBoundingClientRect`, no forced reflow),
- * and advertises it via the injected `publish`. Shares the forward primitive's
- * measure/coalesce/dedupe/dispose engine (`createMeasureLoop`).
+ * and advertises it via the injected `publish`. Its reverse-only
+ * measure/coalesce/dedupe/dispose engine is `createMeasureLoop`.
  *
  * The extent is `Math.round`ed and clamped to `>= 0`; non-finite measurements
  * drop the frame.
@@ -35,17 +36,19 @@ export function createSizeAdvertiser(
   // RAF body (keep the entry out of the shared, DOM-agnostic loop).
   let latest: ResizeObserverSize | null = null
 
-  const produce = (): AdvertisedSize | null => {
+  const produce = (): number | null => {
     if (!latest) return null
     const raw = axis === 'block' ? latest.blockSize : latest.inlineSize
     if (!Number.isFinite(raw)) return null
-    return { axis, extent: Math.max(0, Math.round(raw)) }
+    return Math.max(0, Math.round(raw))
   }
 
-  const loop = createMeasureLoop<AdvertisedSize>({
+  const loop = createMeasureLoop<number>({
     produce,
-    same: (a, b) => a.extent === b.extent, // axis is constant
-    sink: (size) => publish(size),
+    same: (a, b) => a === b,
+    // Keep the loop's dedupe value scalar. The public object only needs to
+    // exist when the publisher is actually invoked for an advertised frame.
+    sink: (extent) => publish({ axis, extent }),
   })
 
   const onResize: ResizeObserverCallback = (entries) => {
@@ -72,14 +75,14 @@ export function createSizeAdvertiser(
   observer.observe(target)
 
   return {
-    update(nextPublish: (size: AdvertisedSize) => void): void {
+    update(nextPublish: Publisher<AdvertisedSize>): void {
       if (disposed) return
       publish = nextPublish
       // Re-advertise the current size to the new sink immediately (mirrors the
       // forward anchor's re-publish on update) so the new channel is not left
       // sizeless until the next ResizeObserver tick.
       const cur = produce()
-      if (cur) loop.emitNow(cur)
+      if (cur !== null) loop.emitNow(cur)
     },
     dispose(): void {
       if (disposed) return

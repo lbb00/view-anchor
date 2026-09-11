@@ -39,13 +39,31 @@ export function createMeasureLoop<T>(cfg: {
    *  non-finite or unavailable measurement. */
   produce: () => T | null
   same: (a: T, b: T) => boolean
-  sink: (value: T) => void
+  sink: import('./types.js').Publisher<T>
 }): MeasureLoop<T> {
   const { produce, same, sink } = cfg
   let rafId: number | null = null
   let active = false
   let disposed = false
   let last: T | null = null
+  let publicationRevision = 0
+
+  // Set the baseline optimistically so synchronous re-entrancy sees the
+  // candidate. If the sink declines or throws, restore it only when an inner
+  // publish has not already established a newer baseline.
+  const deliver = (value: T): boolean => {
+    const previous = last
+    const attempt = ++publicationRevision
+    last = value
+    try {
+      const accepted = sink(value) !== false
+      if (!accepted && publicationRevision === attempt) last = previous
+      return accepted
+    } catch (error) {
+      if (publicationRevision === attempt) last = previous
+      throw error
+    }
+  }
 
   const cancel = (): void => {
     if (rafId !== null) {
@@ -54,25 +72,28 @@ export function createMeasureLoop<T>(cfg: {
     }
   }
 
+  // Keep one callback identity for every scheduled frame. The mutable state it
+  // reads is already owned by this loop, so a fresh closure per frame adds no
+  // isolation while creating avoidable short-lived allocations.
+  const frame = (): void => {
+    rafId = null
+    if (disposed || !active) return
+    const value = produce()
+    if (value === null) return // producer declined this frame
+    // last-value dedupe: a frame whose produced value equals the last one
+    // we emitted costs nothing (no IPC / setBounds).
+    if (last !== null && same(value, last)) return
+    deliver(value)
+  }
+
   return {
     schedule(): void {
       if (disposed || !active || rafId !== null) return
-      rafId = requestAnimationFrame(() => {
-        rafId = null
-        if (disposed || !active) return
-        const value = produce()
-        if (value === null) return // producer declined this frame
-        // last-value dedupe: a frame whose produced value equals the last one
-        // we emitted costs nothing (no IPC / setBounds).
-        if (last !== null && same(value, last)) return
-        last = value
-        sink(value)
-      })
+      rafId = requestAnimationFrame(frame)
     },
     emitNow(value: T): void {
       if (disposed) return
-      last = value
-      sink(value)
+      deliver(value)
     },
     setActive(on: boolean): void {
       active = on
