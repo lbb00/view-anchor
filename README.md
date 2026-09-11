@@ -1,4 +1,6 @@
-# view-anchor
+<p align="center">
+  <img src="https://raw.githubusercontent.com/lbb00/view-anchor/main/assets/banner.svg" alt="view-anchor — keep anything outside the DOM aligned to a DOM element" width="820">
+</p>
 
 > A high-performance geometry bridge that keeps anything living outside the DOM aligned to a DOM element: an Electron `WebContentsView`, a native webview in another desktop shell, a cross-origin iframe, or any surface you position from a rectangle. Every move and resize is published synchronously with no duplicate frames, and the whole package is about 2.6 KB gzipped.
 
@@ -184,7 +186,7 @@ The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 ## Documentation
 
-- [docs/mechanism.mdx](./docs/mechanism.mdx): how the forward direction works. Synchronous publishing, stale-frame safety, the `present` / zero-rect / unmount contract, StrictMode behaviour. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
+- [docs/mechanism.md](./docs/mechanism.md): how the forward direction works. Synchronous publishing, stale-frame safety, the `present` / zero-rect / unmount contract, StrictMode behaviour. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
 - [docs/bidirectional-design.md](./docs/bidirectional-design.md): running both directions at once. Why the forward path is synchronous while the reverse path uses animation frames, single-axis ownership, and where the trust boundary sits.
 - [docs/protocol.md](./docs/protocol.md): message envelopes, validation, ordering, batching, and what happens on failure.
 - [docs/performance-report.md](./docs/performance-report.md): reproducible CPU, heap, RSS, extreme-case, V8, and export-size measurements.
