@@ -119,11 +119,7 @@ function Anchored(props: {
   return <div ref={setRef} data-testid="anchored" />
 }
 
-// ── Contract 8: ref attach ⇒ createViewAnchor(el, opts) ──────────────
-// Bug it catches: the adapter never wiring the ref to the core means the
-// native view never gets initial bounds → never attaches.
-
-describe('useViewAnchor — ref attach', () => {
+describe('useViewAnchor: ref attach', () => {
   it('present=true: publishes the element rect once on mount', () => {
     const publish = vi.fn()
     act(() => {
@@ -161,17 +157,7 @@ describe('useViewAnchor — ref attach', () => {
   })
 })
 
-// ── Contract 9: ref null ⇒ publish ZERO, then dispose ───────────────
-// Bug it catches: when the DOM node unmounts but the hook lives on (e.g.
-// the leaf div conditionally rendered), failing to dispose leaks the RO
-// and keeps publishing against a detached element.
-//
-// This contract ALSO requires emitting one ZERO on detach. The anchor's
-// follower is a main-process WebContentsView; the host only collapses it on
-// `{0,0,0,0}`. Without a ZERO the native view stays frozen at its last bounds
-// and occludes content. See `react.ts`.
-
-describe('useViewAnchor — ref null disposes', () => {
+describe('useViewAnchor: ref null disposes', () => {
   it('detaching the DOM node publishes ZERO once, disconnects the observer, and stops publishing', async () => {
     const publish = vi.fn()
 
@@ -281,12 +267,7 @@ describe('useViewAnchor — ref null disposes', () => {
   })
 })
 
-// ── Contract 10: opts/deps change ⇒ re-publish at current rect ───────
-// Bug it catches: a tab switch toggles `display:none` (a `deps` entry) and
-// the rect changes, but without re-emit the native view stays at the stale
-// position → it lands in the wrong place after the tab switch.
-
-describe('useViewAnchor — opts/deps change re-publishes', () => {
+describe('useViewAnchor: opts/deps change', () => {
   it('present change false → true re-publishes the current rect', () => {
     const publish = vi.fn()
     const { rerender } = render(
@@ -362,15 +343,7 @@ describe('useViewAnchor — opts/deps change re-publishes', () => {
   })
 })
 
-// ── Contract 11: unmount ⇒ publish ZERO, then dispose ───────────────
-// Bug it catches: a hook that does not dispose on unmount leaks the RO and
-// can throw when a queued RAF fires against a torn-down IPC channel.
-//
-// Unmount must ALSO collapse the native view with one ZERO (same reasoning as
-// Contract 9 — the follower is a main-process WebContentsView the host only
-// collapses on `{0,0,0,0}`).
-
-describe('useViewAnchor — unmount disposes', () => {
+describe('useViewAnchor: unmount disposes', () => {
   it('unmounting the component publishes ZERO once, disconnects the observer, and never publishes after', async () => {
     const publish = vi.fn()
     const { unmount } = render(
@@ -389,25 +362,19 @@ describe('useViewAnchor — unmount disposes', () => {
 
     expect(ro.disconnected).toBe(true)
 
-    // Unmount publishes exactly one ZERO to collapse the native view —
-    // publishing nothing would leave the native view stranded.
+    // Unmount publishes exactly one ZERO to collapse the native view.
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
     publish.mockClear()
 
-    // After unmount the anchor is inert: a later observer/resize tick (read
-    // synchronously against `disposed`) publishes nothing — no queued frame.
+    // After unmount the anchor is inert.
     ro.fire()
     window.dispatchEvent(new Event('resize'))
     expect(publish).not.toHaveBeenCalled()
   })
 })
 
-// ── Contract 12: independent instances don't interfere ──────────────
-// Bug it catches: shared module-level state (single RO / single publish
-// target) would cross-wire two anchors so one's resize moves the other.
-
-describe('useViewAnchor — independent instances', () => {
+describe('useViewAnchor: independent instances', () => {
   it('two anchors observe their own element and publish independently', () => {
     const publishA = vi.fn()
     const publishB = vi.fn()

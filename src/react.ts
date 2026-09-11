@@ -13,8 +13,8 @@ import type {
 
 export interface UseViewAnchorOptions extends ViewAnchorOptions {
   /**
-   * Values that must re-apply the current anchor when they change. Keep this
-   * array's length stable across renders, as required by React effect deps.
+   * Values that re-apply the anchor when changed. Keep this array's length
+   * stable across renders.
    */
   deps?: ReadonlyArray<unknown>
 }
@@ -24,13 +24,13 @@ export type ViewAnchorRef = (el: HTMLElement | null) => void | (() => void)
 
 export interface UsePlacementAnchorOptions extends PlacementAnchorOptions {
   /**
-   * Values that must re-apply the current anchor when they change. Keep this
-   * array's length stable across renders, as required by React effect deps.
+   * Values that re-apply the anchor when changed. Keep this array's length
+   * stable across renders.
    */
   deps?: ReadonlyArray<unknown>
 }
 
-/** A callback ref for the explicit-visibility Placement API. */
+/** Callback ref for the explicit-visibility Placement API. */
 export type PlacementAnchorRef = ViewAnchorRef
 
 type AnchorHandle = { dispose(): void }
@@ -42,12 +42,10 @@ interface LifecycleAdapter<Options, Handle extends AnchorHandle> {
   isCollapsed(options: Options): boolean
 }
 
-// Callback refs own the imperative anchor because React invokes them during
-// commit, before passive effects. React 19 may call the cleanup returned from
-// a ref and immediately attach that same element again to replay lifecycles in
-// development. A real detach and that replay are indistinguishable at cleanup
-// time, so collapse is deferred by one microtask: a same-turn reattach cancels
-// it, while a real disappearance is hidden and disposed before the next task.
+// Callback refs own the imperative anchor because React invokes them during commit.
+// React 19 may call the cleanup returned from a ref and immediately reattach the
+// same element in development mode. Collapse is deferred by one microtask so that
+// immediate reattachment cancels the collapse.
 function useAnchorRef<Options, Handle extends AnchorHandle>(
   options: Options,
   applied: ReadonlyArray<unknown>,
@@ -56,8 +54,6 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
   const handleRef = useRef<Handle | null>(null)
   const elementRef = useRef<HTMLElement | null>(null)
   const optionsRef = useRef(options)
-  // The ref callback runs in commit before effects; it must see this render's
-  // options when a previously absent element attaches.
   // eslint-disable-next-line react-hooks/refs
   optionsRef.current = options
   const adapterRef = useRef(adapter)
@@ -67,10 +63,8 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
   const currentAppliedRef = useRef(applied)
   // eslint-disable-next-line react-hooks/refs
   currentAppliedRef.current = applied
-  // Options actually handed to the adapter by the last create/update call.
-  // `applied` is a fresh array on every render even when its values are
-  // unchanged, so array identity cannot tell "already applied" from "not yet
-  // applied" — this ref tracks the real applied state instead.
+  // Options handed to the adapter on the last create/update call.
+  // Tracks applied state across renders where the deps array reference changes.
   const lastAppliedOptionsRef = useRef(options)
   const detachTokenRef = useRef(0)
 
@@ -82,8 +76,6 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
     const handle = handleRef.current
     if (!handle) return
     const adapter = adapterRef.current
-    // A same-commit visibility effect may already have published the collapse
-    // before this deferred ref cleanup runs.
     const alreadyCollapsed = adapter.isCollapsed(lastAppliedOptionsRef.current)
     try {
       if (!alreadyCollapsed) adapter.collapse(handle, optionsRef.current)
@@ -104,7 +96,6 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
 
   const ref = useCallback<ViewAnchorRef>((element) => {
     if (element === elementRef.current) {
-      // React 19's cleanup → same-element reattach replay lands here.
       cancelPendingDetach()
       return element ? () => deferDetach(element) : undefined
     }
@@ -113,8 +104,6 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
     const previous = elementRef.current
     if (handleRef.current) {
       if (element) {
-        // A → B is a live swap: the new anchor synchronously publishes its
-        // real Placement, so do not flicker through a hidden value.
         handleRef.current.dispose()
         handleRef.current = null
       } else if (previous) {
@@ -146,14 +135,10 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
       adapterRef.current.update(handle, optionsRef.current)
       lastAppliedOptionsRef.current = optionsRef.current
     }
-    // `applied` is deliberately caller-built and may contain a stable-length
-    // deps array, matching React's documented dynamic dependency pattern.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, applied)
 
   useEffect(() => {
-    // StrictMode effect replay also has a cleanup/setup pair. Its setup runs
-    // before the queued microtask and therefore cancels that throwaway cleanup.
     cancelPendingDetach()
     return () => {
       const element = elementRef.current
@@ -178,7 +163,7 @@ const viewAdapter: LifecycleAdapter<ViewAnchorOptions, ViewAnchorHandle> = {
   },
 }
 
-/** Bind legacy zero-bounds visibility to a DOM element callback ref. */
+/** Bind zero-bounds visibility to a DOM element callback ref. */
 export function useViewAnchor(options: UseViewAnchorOptions): ViewAnchorRef {
   return useAnchorRef(
     options,
@@ -193,10 +178,8 @@ const placementAdapter: LifecycleAdapter<
 > = {
   create: createPlacementAnchor,
   update(handle, options) {
-    // `handle.update` treats an omitted flag as "keep current value" (see
-    // `createPlacementAnchor`'s JSDoc), but a React options object is the
-    // caller's full current intent for this render — an omitted flag here
-    // must mean "off", matching every other declarative React prop.
+    // In React, an omitted option represents "off" for that render,
+    // rather than keeping the previous value.
     handle.update({
       ...options,
       guardDisplayNone: options.guardDisplayNone ?? false,
@@ -212,12 +195,7 @@ const placementAdapter: LifecycleAdapter<
   },
 }
 
-/**
- * Bind the explicit Placement API to a DOM element callback ref. `pulse()` is
- * intentionally imperative-only: a ref callback has no natural call site for
- * a one-off animation request, while `followScroll`/`followGeometry` cover
- * continuous DOM-driven motion declaratively.
- */
+/** Bind the explicit Placement API to a DOM element callback ref. */
 export function usePlacementAnchor(
   options: UsePlacementAnchorOptions,
 ): PlacementAnchorRef {

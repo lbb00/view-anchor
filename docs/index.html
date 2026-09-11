@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>view-anchor — 3D live demo: keep a native view glued to a DOM element</title>
-<meta name="description" content="view-anchor keeps an Electron WebContentsView glued to a DOM element's geometry. The 3D demo below runs the real core in your browser.">
+<title>view-anchor 3D demo: align an Electron WebContentsView, webview or iframe to a DOM element</title>
+<meta name="description" content="view-anchor is a high-performance geometry bridge that keeps an Electron WebContentsView, native webview or cross-origin iframe aligned to a DOM element. This interactive 3D demo runs the real core in your browser.">
 <style>
   :root {
     --bg:               hsl(  0  0%   7%);
@@ -212,8 +212,8 @@
       <img alt="License" src="https://img.shields.io/npm/l/view-anchor">
       <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D24-339933">
     </div>
-    <h1>view-anchor — keep a native view glued to a DOM element</h1>
-    <p class="tag-en">A native <b style="color:var(--native-bd)">WebContentsView</b> stays glued to a DOM element's rectangle — measured in the renderer, applied wherever your host needs it. Resize the splitter, toggle <code>present</code>, or explode the deck below: the green view is driven by the real view-anchor core running in this page.</p>
+    <h1>view-anchor: interactive 3D demo</h1>
+    <p class="tag-en">Align a native <b style="color:var(--native-bd)">WebContentsView</b> to a DOM element's geometry. Resize the splitter, toggle <code>present</code>, or explode the 3D scene below: the green view is positioned by the real view-anchor core running in this page.</p>
     <div class="actions">
       <a href="https://github.com/lbb00/view-anchor">GitHub</a>
       <a href="https://www.npmjs.com/package/view-anchor">npm</a>
@@ -282,7 +282,7 @@
       <a href="https://www.npmjs.com/package/view-anchor">npm · view-anchor</a>
       <span style="color:var(--text-3)">MIT licensed</span>
     </div>
-    <div class="hint">Drag <code>Split</code> to resize the placeholder, toggle <code>present</code> to collapse/restore, and open <code>Explode</code> for the 3D relationship — the green view's position and size come entirely from view-anchor's <code>publish</code>, the same path a real Electron host uses with IPC → setBounds.</div>
+    <div class="hint">Drag <code>Split</code> to resize the placeholder, toggle <code>present</code> to collapse or restore, and toggle <code>Explode</code> for the 3D perspective. The green view's bounds come directly from view-anchor's <code>publish</code> callback.</div>
   </footer>
 
 </div>

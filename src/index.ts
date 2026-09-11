@@ -1,18 +1,7 @@
 /**
- * view-anchor — engine-agnostic primitive that keeps a main-process native
- * view (Electron `WebContentsView`) aligned to a DOM element's geometry.
- *
- * Public surface:
- *   - `createViewAnchor`    — forward: DOM rect → native view bounds.
- *   - `useViewAnchor`       — React adapter returning a ref callback.
- *   - `createSizeAdvertiser`— reverse: downstream content size → host.
- *   - `Bounds` / `AdvertisedSize` / option + handle types.
- *
- * Self-contained on purpose: the only runtime deps are `react` (adapter
- * only) and browser APIs (`ResizeObserver` / `requestAnimationFrame` /
- * `getBoundingClientRect`). See the design notes and the interactive 3D
- * walkthrough in `docs/` (`mechanism.mdx` / `index.html`).
+ * view-anchor: keeps an external surface aligned with a DOM element's geometry.
  */
+
 export {
   createViewAnchor,
   measurePlacement,

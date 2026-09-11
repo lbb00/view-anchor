@@ -1,140 +1,108 @@
-# view-anchor 双向几何桥
+# 双向几何设计
 
-view-anchor 是一座**双向几何桥**，引擎无关、传输注入：
+view-anchor 支持双向几何同步：
 
-- **正向** `createViewAnchor(target, { present, publish })` —— 宿主渲染进程量 DOM 占位矩形 → `publish(bounds)` → IPC → 主进程 `WebContentsView.setBounds`。
-- **反向** `createSizeAdvertiser(target, { axis, publish })` —— 下游 WebContentsView 自己的渲染进程量自身内容尺寸 → `publish(size)` → IPC → 宿主，宿主据此调整占位尺寸，再经正向把视图贴上去。
+- **正向（`createViewAnchor`）**：宿主测量 DOM 占位元素的位置和尺寸，通过 `publish(bounds)` 发送给主进程或外部容器，更新原生视图（如 `WebContentsView.setBounds`）。
+- **反向（`createSizeAdvertiser`）**：下游视图内部测量自身内容尺寸，通过 `publish(size)` 通知宿主调整占位大小，宿主再通过正向更新视图位置。
 
-适用场景：toolbar 这类「**交给下游控制**」的 WebContentsView，尺寸的事实来源在下游一侧（典型：宽由宿主主导、高由下游内容主导），占位映射是动态的。
+常见场景：嵌套在宿主中的工具栏或面板，其宽度由宿主布局决定，高度则由子视图自身的内容决定。
 
-范围之外：不是同层渲染（合成器层面、另一套机制）；包里不提供 React 反向适配、不提供宿主决策 `decide`（见 §3/§6）。
+## 1. 为什么正向走同步、反向走 RAF
 
-## 1. 正反向不共享发射核心——两个方向最优时机不同
+两个方向在性能和交互上的要求不同，因此没有共用同一套调度逻辑：
 
-正反向的最优发射时机本就不同，所以它们**不共享发射核心**，采取**正向同步、反向 RAF** 的刻意不对称。
+- **正向（`createViewAnchor`）采用同步发布。**
+  原生视图的 `setBounds` 需要跨进程通信，相比渲染进程本身的页面绘制通常已经有大约一帧的延迟。如果测量和发布再走一次 `requestAnimationFrame`，拖拽时就会产生两帧以上的视觉延迟，出现明显的边框脱节。因此正向在 `ResizeObserver` 和窗口 `resize` 回调中**同步测量并发布**，高频触发的防抖则依赖前后数值的比对（相同矩形直接跳过）。
+- **反向（`createSizeAdvertiser`）采用 RAF 调度（`createMeasureLoop`）。**
+  反向构成了一条跨进程的反馈环：下游上报尺寸 → 宿主调整占位大小 → 下游重新布局与测量 → 再次上报。在这个链路中，将上报频率限制在每帧至多一次（与屏幕刷新率对齐）能够有效避免高频震荡，同时提供平滑的缓冲。
 
-**正向 `createViewAnchor` = 同步发布，不走 RAF。** 原生 overlay 的 `setBounds` 是跨进程、本就晚约 1 合成帧；RAF 再叠一帧 → 拖拽可见拖尾。所以正向在每个 `ResizeObserver` / window `resize` 触发里**同步**测量+发布，抗洪由 `lastPublished` 同值去重承担。撤销安全靠「每次发布开头同步读 `disposed`/`present`」——没有排队帧可跑赢状态变化。正向的 sink 是 IPC→主进程 `setBounds`，**不碰本渲染进程 DOM**，所以同步发布不会形成 RO 重入循环。
-
-**反向 `createSizeAdvertiser` = RAF 合并（内部 `createMeasureLoop`，反向专用）。** 反向是一条**跨进程反馈环**：advertise → 宿主 resize 这块视图 → 下游内容 remeasure → 再 advertise。RAF 的「每帧≤1 次发布」对这条环是合理的阻尼。`createMeasureLoop<T>` 只服务反向（正向不用它），通过注入 `produce`/`same`/`sink` 三元组把方向细节关在外层，核心零 flag：
-
-```ts
-function createMeasureLoop<T>(cfg: {
-  produce: () => T | null        // RAF 体内取值：读最近一帧 borderBoxSize（null=跳过帧）
-  same: (a: T, b: T) => boolean  // 去重谓词（反向 = extent 相等）
-  sink: Publisher<T>             // 同步返回 false 表示未接收
-}): { schedule, emitNow, setActive, cancel, dispose }
-```
-
-**为什么不对称是对的**：正向是单向跟随者，少一帧直接消除可见拖尾；反向是反馈环，多一帧阻尼更稳。把两者塞进一个核心要么逼出 `if(direction)` flag，要么把正向也拖进 RAF（带回拖尾）。所以**正向内联同步、反向用 RAF 引擎**，各取所需。
-
-## 2. 反向原语契约
+## 2. 反向接口说明
 
 ```ts
 export type AdvertisedAxis = 'block' | 'inline'
 
-// 帧载荷：纯标量，连「哪条轴」都无从携带 → 单轴在类型层不可拼写。
 export interface AdvertisedSize {
-  readonly axis: AdvertisedAxis   // 镜像工厂常量，逐帧恒等，供宿主白名单校验
-  readonly extent: number         // 主导轴内容尺寸，CSS px，已 round，钳到 >= 0
+  readonly axis: AdvertisedAxis   // 固定轴，供宿主做白名单检查
+  readonly extent: number         // 内容尺寸（CSS 像素），四舍五入且 >= 0
 }
 
 export interface SizeAdvertiserOptions {
-  axis: AdvertisedAxis                       // 创建期定死，一个 advertiser 一生只报一条轴
-  publish: Publisher<AdvertisedSize>         // 注入；false=未接收，Promise 不合法
+  axis: AdvertisedAxis            // 创建后固定，每个 advertiser 只负责一条轴
+  publish: Publisher<AdvertisedSize> // 接收尺寸发布的回调
 }
 
 export interface SizeAdvertiserHandle {
-  update(publish: Publisher<AdvertisedSize>): void       // 只能换 publish（换 IPC 通道）；axis 不可变
-  dispose(): void                            // 停 observe、取消 RAF，此后永不再 publish
+  update(publish: Publisher<AdvertisedSize>): void // 切换 publish 回调
+  dispose(): void                                  // 停止监听并取消 RAF
 }
 
-export function createSizeAdvertiser(target: HTMLElement, opts: SizeAdvertiserOptions): SizeAdvertiserHandle
+export function createSizeAdvertiser(
+  target: HTMLElement,
+  opts: SizeAdvertiserOptions,
+): SizeAdvertiserHandle
 ```
 
-- 跑在**下游**渲染进程；从 `ResizeObserverEntry.borderBoxSize` 读尺寸（零强制 reflow，**禁**回调内 `getBoundingClientRect`/`scrollHeight`）；上报前 `Math.round` + `Math.max(0, ...)`（与正向 `measure` 的 round/钳零对称）。
-- `target` 由调用方选成「主导轴上 shrink-to-fit、不被宿主写入反向决定」的 wrapper（与 `createViewAnchor` 一样，原语不碰调用方 DOM/样式）。
-- **没有 `present`**：反向「停止上报」无指令语义（塌缩还是保持是宿主策略），停就 `dispose`、恢复就重建。不给不可信下游一个隐式控宿主的布尔旁路。
-- 双轴需求 = **两个独立 advertiser 各管一轴**，不是一个 payload 塞两轴（后者把两条单向流伪装成一条双向流，使 DAG 退化成有环图）。
+- 运行在下游视图的渲染环境中；从 `ResizeObserverEntry.borderBoxSize` 直接读取尺寸，避免在回调中触发 `getBoundingClientRect` 引起强制回流（reflow）。
+- 上报前会执行 `Math.round` 取整并钳位至 `>= 0`。
+- 目标元素 `target` 应当在所负责的轴上根据内容自适应（shrink-to-fit），不能被宿主设置的尺寸反向影响。
+- 如果需要同时汇报宽和高，应当针对不同轴分别创建两个独立的 advertiser，而不是放在同一条消息中，以保持数据流向的清晰。
 
-## 3. 单轴所有权（收敛性地基，不可协商）
+## 3. 单轴控制与收敛性
 
-- 一个 advertiser 只测量并只上报**它主导的那条轴**；另一条轴由宿主经 `setBounds` 单向灌入、对下游**只读**。
-- 为什么收敛：宽 = 宿主输入（无回边）；高 = block layout 的**输出**而非输入（无回边）→ 整条尺寸传播是单向 DAG，**一步收敛**。违反单轴 = 跨进程双 RAF 乒乓，是抖动/极限环根因。去环靠**拓扑**（单轴 + 类型不可拼写），不靠 epsilon 死区/低通滤波。
+为了避免死循环，必须遵循单轴控制原则：
 
-## 4. 信任边界（精确划线）
+- 一个 advertiser 只测量并上报它负责的那条轴；另一条轴由宿主通过 `setBounds` 单向传入，下游只读。
+- 典型案例：宿主决定宽度，下游决定高度。因为高度是内容流式排版的结果而不是输入，整个尺寸传递是一条单向有向无环图（DAG），更新可以在单步内收敛。
+- 如果下游的高度又反过来改变了下游的宽度（或测量了 `<body>`/`<html>`），就会形成跨进程的循环调整，导致界面抖动。
 
-> 反向把「尺寸控制权」交给一个**下游控制**（半信任/不可信）的视图。上报值是攻击者输入，不是测量结果。
+## 4. 职责与信任边界
 
-判据：**凡只需测量上下文的归原语；凡需 viewport/策略/对端身份的归宿主。**
+下游视图可能运行不可信或第三方代码，因此上报的尺寸应当被当作不可信输入处理。
 
-| 责任 | 归属 | 说明 |
+| 职责 | 负责方 | 说明 |
 |---|---|---|
-| `Math.round` 量化 | 原语 | 测量副产物，出生地最便宜 |
-| 丢 `NaN`/`Infinity` | 原语 | 测量噪声，不该塞进 IPC |
-| 负值 → **钳到 0**（非丢弃） | 原语 | 与正向 `Math.max(0,...)` 对称；钳零＝诚实上报「现在测出来是 0」，丢弃会让宿主停在过期值 |
-| 限流 | **两边都不额外加** | 原语的 RAF 合并 + 去重已是终极限流（跟随刷新率、静止零发）；宿主用 clamp + `decide` 幂等吸收突发，**不做时间节流**（会吞掉合法离散事件） |
-| `clamp(min, max)` | 宿主 | 唯一持有 viewport/available/策略的一方；对抗恶意巨值的**主防线** |
-| 来源校验（senderFrame/origin/token） | 宿主 | 只能发生在收 IPC 那一刻 |
-| 白名单轴 | 宿主 | 用 payload 的 `axis` 常量比对，`axis !== expected` 则丢弃 |
-| 位置 / 另一轴 / z-order 锁定 | 宿主 | 下游无任何途径改变 → 杜绝全窗覆盖类点击劫持 |
+| 数值取整 | view-anchor | 避免传递非整数像素 |
+| 过滤 NaN / Infinity | view-anchor | 丢弃异常无效数值 |
+| 负数归零 | view-anchor | 保证尺寸非负，反映真实测量结果 |
+| 视口限制（clamp） | 宿主 | 依据当前窗口可用空间对上报值做范围约束，防止异常大值 |
+| 发送方身份校验 | 宿主 | 在接收 IPC 或 postMessage 时验证 senderFrame、origin 或 token |
+| 轴白名单校验 | 宿主 | 检查 `axis` 是否与宿主预期的控制轴一致 |
+| 位置与层级锁定 | 宿主 | 下游不能擅自修改自身的坐标位置或 z-index |
 
-**target 选错（反馈环）的防护——克制为主，不过度防御。** 关键事实：违反单轴所有权时，RAF 合并把「死循环」**封顶为每帧一次**——它退化成可见的抖动 / 每帧一次冗余 IPC，而**不是冻死 UI**。既然不是灾难性故障，就不在每帧路径上堆检测器。只保留：
+**针对错误选择 target 的提醒**：
+如果把 `target` 设为 `document.body` 或 `documentElement`，其尺寸直接等于宿主给定的视口大小，会导致无法正确收缩。对此 `createSizeAdvertiser` 在初始化时提供了一次性控制台警告，帮助快速排查问题。
 
-- **一条构造期廉价守卫**：`target` 是 `<body>`/`<html>` 时 `console.warn`——这是「stable-but-wrong」（占位永远撑成视图高、不缩到内容）最常见的成因，一次性、零每帧成本。
-- **其余靠文档**：JSDoc 与本节把「target 必须主导轴 shrink-to-fit、不被宿主灌入的尺寸反向决定」讲清。
-- **明确不做**：每帧的 2-cycle / 单调发散检测器（复杂度与「非灾难性、RAF 封顶」的故障不成正比）、运行时熔断（会把可见症状盖成静默失效）、向宿主回传灌入值做对比（会亲手造出 §3 要消灭的反馈边）。发散的真正兜底是宿主侧 `clamp(max)`。
+## 5. 宿主与下游的配合方式
 
-## 5. 两个原语如何「锚」到一起
+正向与反向并不直接通信，它们通过宿主中的**占位 DOM 元素**进行连接：
 
-正向与反向**不直接相互调用**——各自只有一个注入的 `publish` 往 IPC 上发。把两端串到一起的是宿主里的**占位 div** + 宿主的 `decide` 函数。占位 div 是会合点（join point）：
-
-- **`createSizeAdvertiser` 写**占位 div 的尺寸（经宿主）——内容多高，占位就多高。
-- **`createViewAnchor` 读**占位 div 的矩形——占位在哪、多大，原生视图就贴哪、多大。
-
-即：反向喂占位的「一条轴的大小」，正向把占位的「完整矩形」投到原生视图上。占位 div 是几何的**唯一真相**，两端都围着它转。
-
-### 闭环（以 toolbar 为例）
+- 下游的 `createSizeAdvertiser` 将内容尺寸通知宿主，宿主更新占位元素的高度。
+- 宿主的 `createViewAnchor` 监听占位元素的矩形变化，将新位置同步给外部视图。
 
 ```
-宿主渲染进程                          宿主主进程           下游渲染进程（toolbar 自己的页面）
+宿主渲染进程                          宿主主进程           下游渲染进程（如工具栏页面）
 ──────────                          ────────            ────────────────────────────
-[占位 div]                                               [内容 wrapper（shrink-to-fit）]
+[占位 div]                                               [内容容器（自适应高度）]
   │ ▲                                                      │
-  │ │ ② decide 把高写进占位 div                             │ ① createSizeAdvertiser
-  │ │    div.style.height = clamp(size.extent)             │    量 wrapper 的 block-size
-  │ └─────────── IPC ◀─────────────────────────────────────┘    publish(size) ──▶
+  │ │ ② 宿主校验并更新占位高度                             │ ① createSizeAdvertiser
+  │ │    div.style.height = clamp(size.extent)             │    测量容器高度
+  │ └─────────── IPC / postMessage ◀───────────────────────┘    publish(size) ──▶
   │
-  │ ③ 占位 div 尺寸变 → createViewAnchor 的 ResizeObserver 触发
-  │    量占位新矩形 → publish(bounds)
+  │ ③ 占位尺寸变化，ResizeObserver 触发
+  │    测量占位新矩形 → publish(bounds)
   ▼
-  ──── IPC ──▶ ④ view.setBounds(bounds) ──▶ [WebContentsView（这块 toolbar）]
-                                               │ 视图变 → 下游 viewport 变 → 内容重新布局
-                                               └──▶ 回到 ① advertiser 再量（收敛）
+  ──── IPC ──▶ ④ view.setBounds(bounds) ──▶ [WebContentsView / 原生视图]
+                                               │ 视图尺寸更新，下游视口变化
+                                               └──▶ 下游内容重新排版（单步收敛）
 ```
 
-1. **下游**：`createSizeAdvertiser(wrapper, { axis:'block', publish })` 量内容高 → IPC 发回宿主。
-2. **宿主**：纯函数 `decide(size, { axis, min, max, available })` 夹一夹，把结果写进**占位 div 的高**（`div.style.height = …`）。
-3. **宿主**：占位 div 高一变，`createViewAnchor` 挂在它上的 `ResizeObserver` 立刻触发 → 量出占位新矩形（宽 = 宿主布局给的满宽，高 = 刚写进去的内容高）→ `publish(bounds)`。
-4. **宿主主进程**：`view.setBounds(bounds)` → toolbar 这块 `WebContentsView` 变成新尺寸 → 下游 viewport 变 → 内容重新布局 → 回到 ①。
+1. **下游**：通过 `createSizeAdvertiser` 测量高度并通过 IPC 发给宿主。
+2. **宿主**：对收到的高度做合规性限制（例如限制在 `minHeight` 和 `maxHeight` 之间），并写入占位 div 的样式。
+3. **宿主**：占位 div 尺寸改变，`createViewAnchor` 的 `ResizeObserver` 触发，测量出新的绝对矩形并发给主进程。
+4. **宿主主进程**：调用 `setBounds` 更新原生视图位置与尺寸。
 
-### 谁负责什么
+## 6. 与 Electron preferred-size 的关系
 
-| 角色 | 谁提供 | 在 view-anchor 里？ |
-|---|---|---|
-| `createSizeAdvertiser`（量内容 → 发 size） | view-anchor | ✅ |
-| `createViewAnchor`（量占位 → 发 bounds） | view-anchor | ✅ |
-| `decide`（把 size 写进占位 div 的高）+ 两条 IPC 通道 | **宿主（workbench）** | ❌（刻意，属宿主胶水） |
-| 占位 div、shrink-to-fit wrapper | 调用方的 DOM | ❌ |
+在纯 Electron 环境下，也可以使用 `enablePreferredSizeMode` 和 `preferred-size-changed` 事件由 Electron 主进程自动获取网页期望大小。
 
-- 收敛逻辑收进宿主一个**纯函数** `decide(...)`（可单测、无跨进程协议）。`decide` 住宿主侧，**不进 view-anchor**——包只出两个单向原语，不出收敛策略，否则就从原语滑向框架（§7）。
-- 连续交互（拖窗改宽）走宿主**单向**路径，不进闭环；反向只服务下游内容的**离散**尺寸变化。
-
-## 6. 与 Electron preferred-size 的关系（宿主侧可选数据源，非替代）
-
-宿主若在 Electron 且能接受零下游代码，可用 `enablePreferredSizeMode` + `preferred-size-changed` 作为反向「**源**」喂给同一个 `decide`，省掉下游注入。但它是 Electron 私有，且依赖两个前提：① 在 `WebContentsView` 上触发且上报值吸收 zoom；② `setBounds.height` 不回灌 layout（否则正反馈震荡）。
-
-view-anchor 的反向原语是**引擎无关/可移植**那条路（非 Electron / iframe 宿主、需选子 target 的场景）。两者并存：preferred-size 是 Electron 捷径，advertiser 是可移植机制，`decide` + §4 安全红线是二者共用的公共底座。这也是反向逻辑留在 view-anchor、而非写死成 Electron 事件的理由——宿主选哪个**源**不改变反向原语本身。
-
-## 7. 包定位守恒（一个原语，不是框架）
-
-view-anchor 是「DOM 几何 ↔ 跨进程视图」的**单一职责双向桥**。守住四条即不滑向框架：① 导出面只含 `createViewAnchor` / `createPlacementAnchor` / `createSizeAdvertiser` / `measurePlacement` / `useViewAnchor` + 其类型；② `createMeasureLoop` 不导出；③ 不提供 React 反向适配（下游不保证是 React）；④ `decide` 留宿主、不进包。
+view-anchor 的反向方案是平台无关的实现，适用于跨域 iframe、第三方 webview 或需要针对特定内部 DOM 节点测量尺寸的场景。两者并不冲突，可以根据具体的宿主架构按需选择。

@@ -28,17 +28,13 @@ export interface GeometryBatcher {
 }
 
 /**
- * Wraps placement frames in the versioned protocol envelope. Sequence numbers
- * begin at 1 for each publisher and advance for every attempted delivery,
- * including rejected or throwing sends.
+ * Wraps placement updates in a versioned protocol message. Sequence numbers
+ * start at 1 and increment with each attempted delivery.
  *
- * The returned closure must stay the SAME object for the life of one
- * `{anchorId, generation}` (e.g. cached with `useMemo`/`useRef` in React).
- * `createGeometryBatcher`/`createGeometrySequenceGuard` track a per-generation
- * sequence high-water mark, so recreating a publisher at an unchanged address
- * restarts its `seq` at 1 while the receiver's high-water mark is already
- * ahead — every message up to that mark is then dropped as stale. Bump
- * `generation` whenever a new publisher instance is genuinely required.
+ * Keep one publisher per `{ anchorId, generation }` (e.g. via `useMemo` or `useRef`).
+ * Batchers and sequence guards drop messages with older sequence numbers, so
+ * recreating a publisher for the same address causes its messages to be dropped.
+ * Increment `generation` when intentionally resetting the publisher.
  */
 export function createPlacementMessagePublisher(
   address: GeometryAddress,
@@ -60,9 +56,9 @@ export function createPlacementMessagePublisher(
 }
 
 /**
- * Same envelope and sequence contract as placement publishing, for size
- * frames — including the same stability requirement: keep one publisher per
- * `{anchorId, generation}`, and bump `generation` to replace it.
+ * Wraps size updates in a versioned protocol message.
+ * Follows the same stability rule: keep one publisher per `{ anchorId, generation }`,
+ * and increment `generation` when resetting.
  */
 export function createSizeMessagePublisher(
   address: GeometryAddress,
