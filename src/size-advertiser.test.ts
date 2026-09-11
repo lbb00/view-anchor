@@ -272,6 +272,20 @@ describe('createSizeAdvertiser — RAF coalescing', () => {
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenCalledWith({ axis: 'block', extent: 200 })
   })
+
+  it('reuses one RAF callback function across separate scheduled frames', () => {
+    const publish = vi.fn<(s: AdvertisedSize) => void>()
+    const { el } = buildElement()
+    createSizeAdvertiser(el, { axis: 'block', publish })
+    const ro = firstObserver()
+
+    ro.fire(100, 0)
+    const firstCallback = rafQueue[0]!.cb
+    flushRafs()
+    ro.fire(200, 0)
+
+    expect(rafQueue[0]!.cb).toBe(firstCallback)
+  })
 })
 
 // ── Contract 6: last-extent dedupe on the RO→RAF stream ──────────────

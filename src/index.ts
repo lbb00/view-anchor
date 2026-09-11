@@ -25,15 +25,17 @@ export type {
 export type {
   Bounds,
   Placement,
+  Publisher,
+  PublishResult,
   ViewAnchorOptions,
   ViewAnchorHandle,
 } from './types.js'
-export { useViewAnchor } from './react.js'
-export type { UseViewAnchorOptions, ViewAnchorRef } from './react.js'
 export { createSizeAdvertiser } from './size-advertiser.js'
+export { useViewAnchor } from './react.js'
 export type {
   AdvertisedAxis,
   AdvertisedSize,
   SizeAdvertiserOptions,
   SizeAdvertiserHandle,
 } from './types.js'
+export type { UseViewAnchorOptions, ViewAnchorRef } from './react.js'

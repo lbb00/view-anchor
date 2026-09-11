@@ -21,7 +21,7 @@ view-anchor 是一座**双向几何桥**，引擎无关、传输注入：
 function createMeasureLoop<T>(cfg: {
   produce: () => T | null        // RAF 体内取值：读最近一帧 borderBoxSize（null=跳过帧）
   same: (a: T, b: T) => boolean  // 去重谓词（反向 = extent 相等）
-  sink: (value: T) => void       // = 注入的 publish
+  sink: Publisher<T>             // 同步返回 false 表示未接收
 }): { schedule, emitNow, setActive, cancel, dispose }
 ```
 
@@ -40,11 +40,11 @@ export interface AdvertisedSize {
 
 export interface SizeAdvertiserOptions {
   axis: AdvertisedAxis                       // 创建期定死，一个 advertiser 一生只报一条轴
-  publish: (size: AdvertisedSize) => void    // 注入；下游接 IPC/postMessage → 宿主（与正向 publish 同名同形）
+  publish: Publisher<AdvertisedSize>         // 注入；false=未接收，Promise 不合法
 }
 
 export interface SizeAdvertiserHandle {
-  update(publish: (size: AdvertisedSize) => void): void  // 只能换 publish（换 IPC 通道）；axis 不可变
+  update(publish: Publisher<AdvertisedSize>): void       // 只能换 publish（换 IPC 通道）；axis 不可变
   dispose(): void                            // 停 observe、取消 RAF，此后永不再 publish
 }
 
