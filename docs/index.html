@@ -654,9 +654,9 @@ var __viewAnchorCore = (() => {
         if (disposed) return;
         publish = next.publish;
         visible = next.visible;
-        guardDisplayNone = next.guardDisplayNone ?? false;
-        followScroll = next.followScroll ?? false;
-        followGeometry = next.followGeometry ?? false;
+        guardDisplayNone = next.guardDisplayNone ?? guardDisplayNone;
+        followScroll = next.followScroll ?? followScroll;
+        followGeometry = next.followGeometry ?? followGeometry;
         if (visible && observer) {
           stopOptionalObserving();
           startOptionalObserving();

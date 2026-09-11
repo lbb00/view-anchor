@@ -67,6 +67,11 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
   const currentAppliedRef = useRef(applied)
   // eslint-disable-next-line react-hooks/refs
   currentAppliedRef.current = applied
+  // Options actually handed to the adapter by the last create/update call.
+  // `applied` is a fresh array on every render even when its values are
+  // unchanged, so array identity cannot tell "already applied" from "not yet
+  // applied" — this ref tracks the real applied state instead.
+  const lastAppliedOptionsRef = useRef(options)
   const detachTokenRef = useRef(0)
 
   const cancelPendingDetach = (): void => {
@@ -79,9 +84,7 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
     const adapter = adapterRef.current
     // A same-commit visibility effect may already have published the collapse
     // before this deferred ref cleanup runs.
-    const alreadyCollapsed =
-      appliedRef.current === currentAppliedRef.current &&
-      adapter.isCollapsed(optionsRef.current)
+    const alreadyCollapsed = adapter.isCollapsed(lastAppliedOptionsRef.current)
     try {
       if (!alreadyCollapsed) adapter.collapse(handle, optionsRef.current)
     } finally {
@@ -124,6 +127,7 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
       elementRef.current = element
       handleRef.current = adapterRef.current.create(element, optionsRef.current)
       appliedRef.current = currentAppliedRef.current
+      lastAppliedOptionsRef.current = optionsRef.current
       return () => deferDetach(element)
     }
     return undefined
@@ -138,7 +142,10 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
     if (!changed) return
     appliedRef.current = applied
     const handle = handleRef.current
-    if (handle) adapterRef.current.update(handle, optionsRef.current)
+    if (handle) {
+      adapterRef.current.update(handle, optionsRef.current)
+      lastAppliedOptionsRef.current = optionsRef.current
+    }
     // `applied` is deliberately caller-built and may contain a stable-length
     // deps array, matching React's documented dynamic dependency pattern.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,7 +193,16 @@ const placementAdapter: LifecycleAdapter<
 > = {
   create: createPlacementAnchor,
   update(handle, options) {
-    handle.update(options)
+    // `handle.update` treats an omitted flag as "keep current value" (see
+    // `createPlacementAnchor`'s JSDoc), but a React options object is the
+    // caller's full current intent for this render — an omitted flag here
+    // must mean "off", matching every other declarative React prop.
+    handle.update({
+      ...options,
+      guardDisplayNone: options.guardDisplayNone ?? false,
+      followScroll: options.followScroll ?? false,
+      followGeometry: options.followGeometry ?? false,
+    })
   },
   collapse(handle, options) {
     handle.update({ ...options, visible: false })

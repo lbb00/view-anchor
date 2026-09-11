@@ -109,6 +109,8 @@ const decoded = decodeGeometryWireValue(received, { maxMessages: 100 })
 if (decoded.ok) { /* 先校验发送方身份，再只应用较新的消息 */ }
 ```
 
+`createPlacementMessagePublisher`/`createSizeMessagePublisher` 返回的发布器对象必须在同一个 `{anchorId, generation}` 内保持稳定（React 里用 `useMemo`/`useRef` 缓存，不要在渲染中内联新建）。批处理器和 `createGeometrySequenceGuard` 都按锚点记录序号高水位，重建发布器会让新实例的 `seq` 从 1 重新计数，而高水位已经领先，消息会被当作过期丢弃；需要新的发布器实例时必须同时递增 `generation`。完整说明见 [docs/protocol.md](./docs/protocol.md)。
+
 同步 `publish` 返回 `false` 表示“未接收”，核心会在下一次触发时重试相同几何值。批处理发布器在入队后返回 `true`，后续投递重试由它负责。完整契约见 [docs/protocol.md](./docs/protocol.md)。
 
 ## API

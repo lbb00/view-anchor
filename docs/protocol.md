@@ -34,7 +34,7 @@ const publish = createPlacementMessagePublisher(
 )
 ```
 
-`createPlacementMessagePublisher` 和 `createSizeMessagePublisher` 为每次尝试分配新的 `seq`，即使发送方返回 `false` 或抛错也不复用序号。
+`createPlacementMessagePublisher` 和 `createSizeMessagePublisher` 为每次尝试分配新的 `seq`，即使发送方返回 `false` 或抛错也不复用序号。**发布器对象必须在同一个 `{anchorId, generation}` 内保持稳定**（React 里用 `useMemo`/`useRef` 缓存，不要在渲染中内联新建）：批处理器和接收端的 `createGeometrySequenceGuard` 都按 `anchorId` 记录每种消息类型的序号高水位，重建发布器会让新实例的 `seq` 从 1 重新计数，而高水位已经领先，新实例除非序号追上，否则消息会被当作过期直接丢弃。需要新的发布器实例时，必须同时递增 `generation`。
 
 `createGeometryBatcher` 在当前任务末尾用一个 microtask 发送，不叠加渲染帧延迟。它按 `anchorId + kind` 合并，只保留更新的 `generation/seq`。下游发送返回 `false` 或抛错时，快照留在队列中；下一条有效消息或显式 `flush()` 会重试。所有下游 `send` 抛错（包括显式 `flush()`）都会由可选 `onError` 接收，且 `flush()` 返回 `false`；未提供 `onError` 时同样不会向调用方抛出。锚点销毁时调用 `clear(anchorId)` 释放它的队列和高水位；`clear()` 清理全部锚点但保留批处理器，`dispose()` 则永久停用它。
 

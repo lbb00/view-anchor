@@ -1,37 +1,23 @@
 import type { AdvertisedSize, Placement } from './types.js'
+import {
+  GEOMETRY_PROTOCOL_VERSION,
+  type GeometryAddress,
+  type GeometryBatch,
+  type GeometryMessage,
+  type GeometryWireValue,
+  type PlacementMessage,
+  type SizeMessage,
+} from './protocol-types.js'
 
-/** Current wire format version for geometry messages. */
-export const GEOMETRY_PROTOCOL_VERSION = 1 as const
-
-/** Identifies one logical anchor instance within a transport session. */
-export interface GeometryAddress {
-  anchorId: string
-  generation: number
+export { GEOMETRY_PROTOCOL_VERSION }
+export type {
+  GeometryAddress,
+  GeometryBatch,
+  GeometryMessage,
+  GeometryWireValue,
+  PlacementMessage,
+  SizeMessage,
 }
-
-export interface PlacementMessage extends GeometryAddress {
-  v: typeof GEOMETRY_PROTOCOL_VERSION
-  kind: 'placement'
-  seq: number
-  placement: Placement
-}
-
-export interface SizeMessage extends GeometryAddress {
-  v: typeof GEOMETRY_PROTOCOL_VERSION
-  kind: 'size'
-  seq: number
-  size: AdvertisedSize
-}
-
-export type GeometryMessage = PlacementMessage | SizeMessage
-
-export interface GeometryBatch {
-  v: typeof GEOMETRY_PROTOCOL_VERSION
-  kind: 'batch'
-  messages: readonly GeometryMessage[]
-}
-
-export type GeometryWireValue = GeometryMessage | GeometryBatch
 
 export type GeometryDecodeResult =
   | { ok: true; value: GeometryWireValue }

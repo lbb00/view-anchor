@@ -440,3 +440,27 @@ describe('createGeometryBatcher', () => {
     expect(retainedMs).toBeLessThan(freshMs * 8 + 2)
   })
 })
+
+describe('publisher identity contract', () => {
+  it('drops a recreated publisher’s first message at the same address (publishers must stay stable within a generation)', () => {
+    const send = vi.fn<(batch: GeometryBatch) => boolean | void>()
+    const batcher = createGeometryBatcher(send)
+
+    const first = createPlacementMessagePublisher(address, batcher.publish)
+    first({ visible: true, bounds: { x: 0, y: 0, width: 10, height: 10 } })
+    flushMicrotasks()
+    expect(send).toHaveBeenCalledTimes(1)
+
+    // A new publisher for the SAME {anchorId, generation} restarts its own
+    // `seq` at 1 — but the batcher already recorded seq 1 as this anchor's
+    // high-water mark, so the recreated publisher's first message is silently
+    // dropped. Callers must hold one publisher stable for the life of a
+    // generation (e.g. via useMemo/useRef in React) and bump `generation`
+    // whenever a genuinely new publisher is needed.
+    const second = createPlacementMessagePublisher(address, batcher.publish)
+    expect(second({ visible: true, bounds: { x: 1, y: 1, width: 20, height: 20 } })).toBe(true)
+    flushMicrotasks()
+
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+})

@@ -6,7 +6,7 @@ import {
   type GeometryMessage,
   type PlacementMessage,
   type SizeMessage,
-} from './protocol.js'
+} from './protocol-types.js'
 
 export type GeometrySend = Publisher<GeometryMessage>
 export type GeometryBatchSend = Publisher<GeometryBatch>
@@ -31,6 +31,14 @@ export interface GeometryBatcher {
  * Wraps placement frames in the versioned protocol envelope. Sequence numbers
  * begin at 1 for each publisher and advance for every attempted delivery,
  * including rejected or throwing sends.
+ *
+ * The returned closure must stay the SAME object for the life of one
+ * `{anchorId, generation}` (e.g. cached with `useMemo`/`useRef` in React).
+ * `createGeometryBatcher`/`createGeometrySequenceGuard` track a per-generation
+ * sequence high-water mark, so recreating a publisher at an unchanged address
+ * restarts its `seq` at 1 while the receiver's high-water mark is already
+ * ahead — every message up to that mark is then dropped as stale. Bump
+ * `generation` whenever a new publisher instance is genuinely required.
  */
 export function createPlacementMessagePublisher(
   address: GeometryAddress,
@@ -51,7 +59,11 @@ export function createPlacementMessagePublisher(
   }
 }
 
-/** Same envelope and sequence contract as placement publishing, for size frames. */
+/**
+ * Same envelope and sequence contract as placement publishing, for size
+ * frames — including the same stability requirement: keep one publisher per
+ * `{anchorId, generation}`, and bump `generation` to replace it.
+ */
 export function createSizeMessagePublisher(
   address: GeometryAddress,
   send: GeometrySend,

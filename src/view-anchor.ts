@@ -187,7 +187,8 @@ export interface PlacementAnchorOptions {
    * `{ visible:false }` (detach-but-keep) instead of `{ visible:true,
    * bounds:0×0 }`, and an IntersectionObserver is attached so a display:none
    * transition (which ResizeObserver does not report) re-publishes. Default
-   * false keeps the legitimate 0×0-visible semantics.
+   * false keeps the legitimate 0×0-visible semantics. Sticky across
+   * `update()`: omitting it keeps the current value (see `update`).
    */
   guardDisplayNone?: boolean
   /**
@@ -197,7 +198,8 @@ export interface PlacementAnchorOptions {
    * container scrolling the target re-measures and re-publishes. With
    * `followGeometry` off, the scroll callback does a single synchronous
    * `emit()`; with it on, the scroll OPENS the RAF sentinel window so the
-   * follow tracks every frame of a scroll burst. Default false.
+   * follow tracks every frame of a scroll burst. Default false. Sticky
+   * across `update()`: omitting it keeps the current value (see `update`).
    */
   followScroll?: boolean
   /**
@@ -207,13 +209,20 @@ export interface PlacementAnchorOptions {
    * splitter pointerdown, or an explicit `pulse()`), polls geometry once per
    * animation frame publishing IN-FRAME, and AUTO-CLOSES once the rect goes
    * steady (a few unchanged frames). While closed it schedules no frame, so the
-   * static cost when idle is exactly zero. Default false.
+   * static cost when idle is exactly zero. Default false. Sticky across
+   * `update()`: omitting it keeps the current value (see `update`).
    */
   followGeometry?: boolean
 }
 
 export interface PlacementAnchorHandle {
-  /** Apply new options; re-publishes immediately (mirrors `createViewAnchor`). */
+  /**
+   * Apply new options; re-publishes immediately (mirrors `createViewAnchor`).
+   * `guardDisplayNone`, `followScroll`, and `followGeometry` are sticky: an
+   * omitted flag keeps its current value instead of resetting to `false`, so
+   * a caller that always passes `{ visible, publish }` does not silently turn
+   * off flags enabled at creation. Pass an explicit `false` to turn one off.
+   */
   update(opts: PlacementAnchorOptions): void
   /** Stop observing; never publish again. */
   dispose(): void
@@ -599,9 +608,13 @@ export function createPlacementAnchor(
       if (disposed) return
       publish = next.publish
       visible = next.visible
-      guardDisplayNone = next.guardDisplayNone ?? false
-      followScroll = next.followScroll ?? false
-      followGeometry = next.followGeometry ?? false
+      // Omitting a flag means "keep the current value", not "turn it off" —
+      // callers that only pass `{ visible, publish }` on every update must not
+      // silently disable following/guarding they enabled at creation. An
+      // explicit `false` still turns a flag off.
+      guardDisplayNone = next.guardDisplayNone ?? guardDisplayNone
+      followScroll = next.followScroll ?? followScroll
+      followGeometry = next.followGeometry ?? followGeometry
       if (visible && observer) {
         stopOptionalObserving()
         startOptionalObserving()

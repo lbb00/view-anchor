@@ -133,7 +133,13 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
     drag.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     expect(raf.pending).toBe(1)
 
-    handle.update({ visible: true, publish })
+    handle.update({
+      visible: true,
+      publish,
+      guardDisplayNone: false,
+      followScroll: false,
+      followGeometry: false,
+    })
     expect(FakeIntersectionObserver.instances[0]!.disconnected).toBe(true)
     expect(raf.pending).toBe(0)
     window.dispatchEvent(new Event('scroll'))
@@ -155,6 +161,37 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
       followGeometry: true,
     })
     expect(FakeIntersectionObserver.instances).toHaveLength(2)
+    handle.dispose()
+  })
+
+  it('keeps guardDisplayNone/followScroll/followGeometry across an update that omits them', () => {
+    const publish = vi.fn<(placement: Placement) => void>()
+    const target = element()
+    const handle = createPlacementAnchor(target, {
+      visible: true,
+      publish,
+      guardDisplayNone: true,
+      followScroll: true,
+      followGeometry: true,
+    })
+    expect(FakeIntersectionObserver.instances).toHaveLength(1)
+
+    // A caller that only ever passes `{ visible, publish }` on every update
+    // (the documented old contract) must not silently disable following/
+    // guarding enabled at creation.
+    handle.update({ visible: true, publish })
+    expect(FakeIntersectionObserver.instances).toHaveLength(1)
+    expect(FakeIntersectionObserver.instances[0]!.disconnected).toBe(false)
+
+    const drag = splitter()
+    drag.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(raf.pending).toBe(1)
+
+    // An explicit `false` still turns a flag off.
+    handle.update({ visible: true, publish, followGeometry: false })
+    expect(raf.pending).toBe(0)
+    expect(FakeIntersectionObserver.instances[0]!.disconnected).toBe(false)
+
     handle.dispose()
   })
 
@@ -182,7 +219,7 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
     handle.update({ visible: true, publish, guardDisplayNone: true })
     expect(publish).toHaveBeenLastCalledWith({ visible: false })
 
-    handle.update({ visible: true, publish })
+    handle.update({ visible: true, publish, guardDisplayNone: false })
     expect(publish).toHaveBeenLastCalledWith({
       visible: true,
       bounds: { x: 0, y: 0, width: 0, height: 100 },

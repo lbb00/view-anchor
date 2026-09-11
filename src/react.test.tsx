@@ -239,6 +239,46 @@ describe('useViewAnchor — ref null disposes', () => {
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
   })
+
+  it('an unrelated rerender between collapse and detach does not re-collapse', async () => {
+    const publish = vi.fn()
+
+    function Host(props: { mounted: boolean; present: boolean }): React.JSX.Element {
+      return (
+        <Anchored
+          options={{ present: props.present, publish }}
+          rect={{ x: 0, y: 0, w: 100, h: 100 }}
+          mounted={props.mounted}
+        />
+      )
+    }
+
+    const { rerender } = render(<Host mounted={true} present={true} />)
+    publish.mockClear()
+
+    // present flips to false: the deps-change effect applies the collapse.
+    act(() => {
+      rerender(<Host mounted={true} present={false} />)
+    })
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    publish.mockClear()
+
+    // A rerender with the exact same option values: `applied` is a new array
+    // reference every render even though nothing changed, so this must not
+    // be mistaken for a fresh, uncollapsed state.
+    act(() => {
+      rerender(<Host mounted={true} present={false} />)
+    })
+    expect(publish).not.toHaveBeenCalled()
+
+    // Unmounting now must not send the collapse a second time.
+    await act(async () => {
+      rerender(<Host mounted={false} present={false} />)
+      await Promise.resolve()
+    })
+    expect(publish).not.toHaveBeenCalled()
+  })
 })
 
 // ── Contract 10: opts/deps change ⇒ re-publish at current rect ───────
@@ -811,5 +851,48 @@ describe('usePlacementAnchor', () => {
       visible: true,
       bounds: { x: 10, y: 20, width: 30, height: 40 },
     })
+  })
+
+  it('an unrelated rerender between collapse and detach does not re-collapse', async () => {
+    const publish = vi.fn()
+    let ref!: ReturnType<typeof usePlacementAnchor>
+
+    function Capture(props: { options: UsePlacementAnchorOptions }): null {
+      // eslint-disable-next-line react-hooks/globals -- test-only callback ref capture
+      ref = usePlacementAnchor(props.options)
+      return null
+    }
+
+    const base: UsePlacementAnchorOptions = { visible: true, publish }
+    const { rerender } = render(<Capture options={base} />)
+    const el = document.createElement('div')
+    stubRect(el, { x: 1, y: 2, w: 30, h: 40 })
+    act(() => {
+      ref(el)
+    })
+    publish.mockClear()
+
+    // visible flips to false: the deps-change effect applies the collapse.
+    act(() => {
+      rerender(<Capture options={{ ...base, visible: false }} />)
+    })
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenLastCalledWith({ visible: false })
+    publish.mockClear()
+
+    // A rerender with the exact same option values: `applied` is a new array
+    // reference every render even though nothing changed, so this must not
+    // be mistaken for a fresh, uncollapsed state.
+    act(() => {
+      rerender(<Capture options={{ ...base, visible: false }} />)
+    })
+    expect(publish).not.toHaveBeenCalled()
+
+    // Detaching now must not send the collapse a second time.
+    await act(async () => {
+      ref(null)
+      await Promise.resolve()
+    })
+    expect(publish).not.toHaveBeenCalled()
   })
 })

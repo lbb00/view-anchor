@@ -113,6 +113,8 @@ const decoded = decodeGeometryWireValue(received, { maxMessages: 100 })
 if (decoded.ok) { /* authorize the sender, then apply only newer messages */ }
 ```
 
+The publisher returned by `createPlacementMessagePublisher`/`createSizeMessagePublisher` must stay the SAME object for the life of one `{anchorId, generation}` (cache it with `useMemo`/`useRef` in React, not built inline on every render). The batcher and `createGeometrySequenceGuard` track a per-anchor sequence high-water mark; recreating a publisher at an unchanged address restarts its `seq` at 1 while that mark is already ahead, so its messages get dropped as stale. Bump `generation` when you need a genuinely new publisher. See [docs/protocol.md](./docs/protocol.md).
+
 Returning `false` from a synchronous publisher means “not accepted”; the core retries the same geometry on the next trigger. A batching publisher returns `true` after queueing and owns later delivery retries. See [docs/protocol.md](./docs/protocol.md) for the complete contract.
 
 ## API
