@@ -79,21 +79,25 @@ export function createSizeAdvertiser(
 - 下游的 `createSizeAdvertiser` 将内容尺寸通知宿主，宿主更新占位元素的高度。
 - 宿主的 `createViewAnchor` 监听占位元素的矩形变化，将新位置同步给外部视图。
 
-```
-宿主渲染进程                          宿主主进程           下游渲染进程（如工具栏页面）
-──────────                          ────────            ────────────────────────────
-[占位 div]                                               [内容容器（自适应高度）]
-  │ ▲                                                      │
-  │ │ ② 宿主校验并更新占位高度                             │ ① createSizeAdvertiser
-  │ │    div.style.height = clamp(size.extent)             │    测量容器高度
-  │ └─────────── IPC / postMessage ◀───────────────────────┘    publish(size) ──▶
-  │
-  │ ③ 占位尺寸变化，ResizeObserver 触发
-  │    测量占位新矩形 → publish(bounds)
-  ▼
-  ──── IPC ──▶ ④ view.setBounds(bounds) ──▶ [WebContentsView / 原生视图]
-                                               │ 视图尺寸更新，下游视口变化
-                                               └──▶ 下游内容重新排版（单步收敛）
+```mermaid
+flowchart LR
+  subgraph DOWN["下游渲染进程（如工具栏页面）"]
+    C["内容容器<br/>高度由自身内容决定"]
+  end
+  subgraph HOST["宿主渲染进程"]
+    H["宿主消息处理器<br/>校验来源、clamp 数值"]
+    DIV["占位 div"]
+    VA["createViewAnchor"]
+  end
+  subgraph MAIN["宿主主进程"]
+    NV["WebContentsView / 原生视图"]
+  end
+
+  C -->|"① publish(size)"| H
+  H -->|"② clamp 后写入 style.height"| DIV
+  DIV -->|"ResizeObserver 观测"| VA
+  VA -->|"③ 测出新矩形，publish(bounds)"| NV
+  NV -->|"④ setBounds 后下游视口变化，内容重排"| C
 ```
 
 1. **下游**：通过 `createSizeAdvertiser` 测量高度并通过 IPC 发给宿主。

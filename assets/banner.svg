@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 540" width="1200" height="540" role="img" aria-labelledby="t d">
+<title id="t">view-anchor</title>
+<desc id="d">An anchored view floats one layer above the placeholder div inside a renderer window. Dragging the splitter widens the div, and the anchored view follows the exact same rectangle.</desc>
+
+<defs>
+  <radialGradient id="bg" cx="40%" cy="36%" r="78%">
+    <stop offset="0" stop-color="#1d2028"/>
+    <stop offset="1" stop-color="#101012"/>
+  </radialGradient>
+  <linearGradient id="phg" x1="0" y1="0" x2="0.35" y2="1">
+    <stop offset="0" stop-color="#7057ff" stop-opacity="0.42"/>
+    <stop offset="1" stop-color="#5a45d6" stop-opacity="0.24"/>
+  </linearGradient>
+  <linearGradient id="nvg" x1="0" y1="0" x2="0.35" y2="1">
+    <stop offset="0" stop-color="#2b7f61" stop-opacity="0.7"/>
+    <stop offset="1" stop-color="#12291f" stop-opacity="0.6"/>
+  </linearGradient>
+  <filter id="winShadow" x="-25%" y="-25%" width="160%" height="160%">
+    <feDropShadow dx="0" dy="34" stdDeviation="26" flood-color="#000" flood-opacity="0.55"/>
+  </filter>
+  <filter id="nvShadow" x="-25%" y="-25%" width="160%" height="160%">
+    <feDropShadow dx="0" dy="30" stdDeviation="16" flood-color="#000" flood-opacity="0.5"/>
+  </filter>
+
+  <style>
+    .sans { font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+
+    /* One 10s loop: the splitter is dragged left, the placeholder div widens,
+       and the anchored view one layer up follows the same rectangle. */
+    .drag { animation: drag 10s ease-in-out infinite; }
+    .ph   { animation: ph   10s ease-in-out infinite; }
+    .nv   { animation: nv   10s ease-in-out infinite; }
+    .sb   { animation: sb   10s ease-in-out infinite; }
+
+    @keyframes drag {
+      0%, 8% { transform: translateX(0) }
+      38%, 50% { transform: translateX(-60px) }
+      80%, 100% { transform: translateX(0) }
+    }
+    @keyframes ph {
+      0%, 8% { transform: translateX(0) scaleX(1) }
+      38%, 50% { transform: translateX(-98.7px) scaleX(1.1195) }
+      80%, 100% { transform: translateX(0) scaleX(1) }
+    }
+    @keyframes nv {
+      0%, 8% { transform: translateX(0) scaleX(1) }
+      38%, 50% { transform: translateX(-115.3px) scaleX(1.1195) }
+      80%, 100% { transform: translateX(0) scaleX(1) }
+    }
+    @keyframes sb {
+      0%, 8% { transform: translateX(0) scaleX(1) }
+      38%, 50% { transform: translateX(2.96px) scaleX(0.7887) }
+      80%, 100% { transform: translateX(0) scaleX(1) }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .drag, .ph, .nv, .sb { animation: none }
+    }
+  </style>
+</defs>
+
+<rect width="1200" height="540" fill="url(#bg)"/>
+
+<!-- The 3D scene. Everything below lives in the plane of the renderer window;
+     the matrix is its axonometric projection. Lifting a point along Z is the
+     plane offset d = (138.7, -344.8), so the connector pillars come out
+     perfectly vertical after projection. -->
+<g transform="matrix(0.5133,-0.2221,0.2064,0.2996,60,341.3)">
+
+  <!-- bottom layer: the renderer window -->
+  <g filter="url(#winShadow)">
+    <rect x="0" y="0" width="840" height="520" rx="16" fill="#1b1d21" stroke="#5d6b84" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+  </g>
+  <path d="M0 42 H840" stroke="#3a3f49" stroke-width="1" vector-effect="non-scaling-stroke"/>
+  <circle cx="32" cy="21" r="7" fill="#e05561"/>
+  <circle cx="56" cy="21" r="7" fill="#d8a33c"/>
+  <circle cx="80" cy="21" r="7" fill="#4bb45c"/>
+  <text class="sans" x="112" y="29" font-size="22" fill="#8e97a6">Renderer DOM</text>
+
+  <!-- sidebar: ordinary DOM content, squeezed as the splitter moves -->
+  <g class="sb">
+    <rect x="14" y="56" width="286" height="450" rx="10" fill="#232427"/>
+    <rect x="34" y="86" width="132" height="13" rx="6" fill="#5b5f66"/>
+    <rect x="34" y="122" width="200" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="148" width="246" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="174" width="228" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="200" width="246" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="226" width="176" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="262" width="246" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="288" width="212" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="314" width="246" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="340" width="234" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="366" width="158" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="402" width="246" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="428" width="196" height="9" rx="4" fill="#3a3d42"/>
+    <rect x="34" y="454" width="246" height="9" rx="4" fill="#3a3d42"/>
+  </g>
+
+  <!-- the splitter being dragged -->
+  <g class="drag">
+    <rect x="306" y="56" width="12" height="450" rx="6" fill="#414857"/>
+    <rect x="310" y="256" width="4" height="10" rx="2" fill="#8d97ab"/>
+    <rect x="310" y="272" width="4" height="10" rx="2" fill="#8d97ab"/>
+    <rect x="310" y="288" width="4" height="10" rx="2" fill="#8d97ab"/>
+  </g>
+
+  <!-- bottom layer, right pane: the placeholder div view-anchor measures -->
+  <g class="ph">
+    <rect x="324" y="56" width="502" height="450" rx="12" fill="url(#phg)" stroke="#8670ff" stroke-width="2" stroke-dasharray="8 7" vector-effect="non-scaling-stroke"/>
+  </g>
+  <g class="drag">
+    <text class="mono" x="348" y="480" font-size="26" fill="#cdc2ff" fill-opacity="0.92">&lt;div ref={anchorRef} /&gt;</text>
+  </g>
+
+  <!-- top layer: the anchored view, positioned from publish(bounds) -->
+  <g class="nv" filter="url(#nvShadow)">
+    <rect x="462.7" y="-288.8" width="502" height="450" rx="12" fill="url(#nvg)" stroke="#47e1ae" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
+  </g>
+  <g class="drag">
+    <text class="sans" x="486" y="-244" font-size="30" font-weight="600" fill="#a6f5d6">Anchored view</text>
+  </g>
+
+  <!-- connector pillars: placeholder corner -> the same corner one layer up.
+       Drawn last so they read as a single rectangle lifted along Z. The two on
+       the left travel with the splitter; the right pair is fixed. -->
+  <g stroke="#7df5c8" stroke-width="1.7" stroke-dasharray="8 6" vector-effect="non-scaling-stroke" fill="#7df5c8">
+    <g class="drag">
+      <path d="M324 56 L462.7 -288.8"/>
+      <path d="M324 506 L462.7 161.2"/>
+      <circle cx="324" cy="56" r="6" stroke="none"/>
+      <circle cx="324" cy="506" r="6" stroke="none"/>
+      <circle cx="462.7" cy="-288.8" r="6" stroke="none"/>
+      <circle cx="462.7" cy="161.2" r="6" stroke="none"/>
+    </g>
+    <path d="M826 56 L964.7 -288.8"/>
+    <path d="M826 506 L964.7 161.2"/>
+    <circle cx="826" cy="56" r="6" stroke="none"/>
+    <circle cx="826" cy="506" r="6" stroke="none"/>
+    <circle cx="964.7" cy="-288.8" r="6" stroke="none"/>
+    <circle cx="964.7" cy="161.2" r="6" stroke="none"/>
+  </g>
+
+</g>
+
+<!-- copy -->
+<text class="sans" x="660" y="200" font-size="46" font-weight="700" fill="#f2f2f2" letter-spacing="-0.5">view-anchor</text>
+<text class="sans" x="660" y="236" font-size="19" fill="#adadad">Align anything outside the DOM to a DOM element.</text>
+<text class="sans" x="660" y="265" font-size="17" fill="#7a7a7a">Electron WebContentsView · webview · cross-origin iframe</text>
+
+<rect x="660" y="310" width="18" height="18" rx="4" fill="#7057ff" fill-opacity="0.45" stroke="#8670ff" stroke-width="1.8"/>
+<text class="sans" x="690" y="325" font-size="19" fill="#f2f2f2">Placeholder div<tspan fill="#7a7a7a"> — measured in the DOM</tspan></text>
+
+<rect x="660" y="348" width="18" height="18" rx="4" fill="#1f483a" stroke="#47e1ae" stroke-width="1.8"/>
+<text class="sans" x="690" y="363" font-size="19" fill="#f2f2f2">Anchored view<tspan fill="#7a7a7a"> — same rect, one layer up</tspan></text>
+</svg>

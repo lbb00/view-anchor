@@ -1,4 +1,6 @@
-# view-anchor
+<p align="center">
+  <img src="https://raw.githubusercontent.com/lbb00/view-anchor/main/assets/banner.svg" alt="view-anchor — keep anything outside the DOM aligned to a DOM element" width="820">
+</p>
 
 > A high-performance geometry bridge that keeps anything living outside the DOM aligned to a DOM element: an Electron `WebContentsView`, a native webview in another desktop shell, a cross-origin iframe, or any surface you position from a rectangle. Every move and resize is published synchronously with no duplicate frames, and the whole package is about 2.6 KB gzipped.
 
@@ -27,7 +29,7 @@ Geometry updates fire on every resize and, when following a drag, on every anima
 - **Dedupe before allocate.** A rectangle identical to the last accepted one is rejected by comparing four numbers, before any object is created.
 - **Frame following only when needed.** `followGeometry` polls `requestAnimationFrame` during a scroll burst, a splitter drag, or an explicit `pulse()`, then closes itself once the rectangle settles. Idle cost is zero, and hidden or invalid targets are capped at 30 frames.
 - **O(1) generation changes.** In the protocol layer, moving an anchor to a new generation or clearing it does not touch other anchors.
-- **Latest-wins batching.** Messages queued in the same task are merged in a microtask and only the newest geometry per anchor is sent.
+- **Latest-wins batching.** Messages queued in the same task are merged in a microtask. The newest placement and size for each anchor are sent separately.
 - **Small, tree-shakeable output.** Every function is a separate export with `sideEffects: false`. If you only need `createViewAnchor`, you pay for 528 bytes gzipped.
 
 Numbers from `pnpm benchmark` on Node.js 24, Apple M4, median of three fresh processes:
@@ -157,7 +159,7 @@ if (decoded.ok) { /* check the sender, then apply only newer messages */ }
 
 Two rules keep the ordering correct:
 
-- **Keep one publisher per `{ anchorId, generation }`.** The batcher and `createGeometrySequenceGuard` remember the highest sequence number seen for each anchor. A publisher rebuilt for the same address restarts at sequence 1 and its messages are dropped as stale. In React, hold it in `useMemo` or `useRef`. Bump `generation` when you really want a fresh start.
+- **Keep one publisher per `{ anchorId, generation }`.** The batcher and `createGeometrySequenceGuard` remember the highest sequence number for each message kind per anchor. A publisher rebuilt for the same address restarts at sequence 1 and its messages are dropped as stale. In React, hold it in `useMemo` or `useRef`. Bump `generation` when you really want a fresh start.
 - **A synchronous publisher returns `false` to say "not accepted".** The core then retries the same geometry on the next trigger. A batching publisher returns `true` once queued and owns any later retries.
 
 The full contract is in [docs/protocol.md](./docs/protocol.md).
@@ -184,7 +186,7 @@ The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 ## Documentation
 
-- [docs/mechanism.mdx](./docs/mechanism.mdx): how the forward direction works. Synchronous publishing, stale-frame safety, the `present` / zero-rect / unmount contract, StrictMode behaviour. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
+- [docs/mechanism.md](./docs/mechanism.md): how the forward direction works. Synchronous publishing, stale-frame safety, the `present` / zero-rect / unmount contract, StrictMode behaviour. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
 - [docs/bidirectional-design.md](./docs/bidirectional-design.md): running both directions at once. Why the forward path is synchronous while the reverse path uses animation frames, single-axis ownership, and where the trust boundary sits.
 - [docs/protocol.md](./docs/protocol.md): message envelopes, validation, ordering, batching, and what happens on failure.
 - [docs/performance-report.md](./docs/performance-report.md): reproducible CPU, heap, RSS, extreme-case, V8, and export-size measurements.

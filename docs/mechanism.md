@@ -1,19 +1,10 @@
----
-title: view-anchor
-description: 将主进程原生视图（如 Electron WebContentsView）与 DOM 元素的几何位置保持同步。
----
-
 # view-anchor
 
 让宿主外部的视图（例如 Electron 的 `WebContentsView`）实时对齐某个 DOM 元素的屏幕位置。核心逻辑通过 `getBoundingClientRect()` 测量目标元素，把矩形数据交给注入的 `publish` 回调（通常由调用方转发 IPC 到 `setBounds`），并在元素移动或缩放时同步更新。
 
 核心不依赖 React、Electron 或特定的布局引擎；React 相关的逻辑均隔离在 `view-anchor/react` 适配层中。
 
-<iframe
-  src="./index.html"
-  title="view-anchor 交互演示"
-  style={{ width: '100%', height: '560px', border: '0', borderRadius: '12px' }}
-/>
+> 🎮 [3D 交互演示](https://lbb00.github.io/view-anchor/)：页面里跑的是真实核心代码。拖动分栏、切换面板显示，看原生视图实时跟随。源码见 [index.html](./index.html)。
 
 ## 运行机制
 
