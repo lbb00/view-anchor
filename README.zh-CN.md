@@ -29,7 +29,7 @@
 - **先去重，再分配。** 和上一次已接受的矩形完全相同的结果，只比较四个数字就会被丢弃，不会创建任何对象。
 - **只在需要时逐帧跟随。** `followGeometry` 只在滚动、拖动分栏或显式调用 `pulse()` 时才开始按 `requestAnimationFrame` 轮询，矩形稳定后自动停止。空闲时开销为零，隐藏或无效目标最多跟 30 帧。
 - **generation 切换是 O(1)。** 协议层里，把某个锚点换到新的 generation 或清除它，不会碰到其他锚点。
-- **合并批量，只发最新。** 同一个任务里排队的消息在一个微任务里合并，每个锚点只发送最新的几何数据。
+- **合并批量，只发最新。** 同一个任务里排队的消息在一个微任务里合并，每个锚点分别发送最新的位置和尺寸。
 - **体积小，可摇树。** 每个函数都是独立导出，并声明了 `sideEffects: false`。只用 `createViewAnchor` 的话，你只为 gzip 后 528 字节买单。
 
 以下数字来自 `pnpm benchmark`，环境是 Node.js 24、Apple M4，取三个全新进程的中位数：
@@ -159,7 +159,7 @@ if (decoded.ok) { /* 先校验发送方，再只应用更新的消息 */ }
 
 两条规则保证顺序正确：
 
-- **每个 `{ anchorId, generation }` 只保留一个 publisher。** batcher 和 `createGeometrySequenceGuard` 会记住每个锚点见过的最大序号。针对同一地址重建 publisher 会让序号从 1 重新开始，它发的消息会被当成过期而丢弃。在 React 里用 `useMemo` 或 `useRef` 持有它。确实需要重新开始时，把 `generation` 加一。
+- **每个 `{ anchorId, generation }` 只保留一个 publisher。** batcher 和 `createGeometrySequenceGuard` 会分别记住每个锚点的位置与尺寸消息的最大序号。针对同一地址重建 publisher 会让序号从 1 重新开始，它发的消息会被当成过期而丢弃。在 React 里用 `useMemo` 或 `useRef` 持有它。确实需要重新开始时，把 `generation` 加一。
 - **同步 publisher 返回 `false` 表示"未接受"。** 核心会在下一次触发时重试同一份几何数据。批处理 publisher 入队后就返回 `true`，之后的重试由它自己负责。
 
 完整约定见 [docs/protocol.md](./docs/protocol.md)。

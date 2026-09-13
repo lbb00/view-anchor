@@ -29,7 +29,7 @@ Geometry updates fire on every resize and, when following a drag, on every anima
 - **Dedupe before allocate.** A rectangle identical to the last accepted one is rejected by comparing four numbers, before any object is created.
 - **Frame following only when needed.** `followGeometry` polls `requestAnimationFrame` during a scroll burst, a splitter drag, or an explicit `pulse()`, then closes itself once the rectangle settles. Idle cost is zero, and hidden or invalid targets are capped at 30 frames.
 - **O(1) generation changes.** In the protocol layer, moving an anchor to a new generation or clearing it does not touch other anchors.
-- **Latest-wins batching.** Messages queued in the same task are merged in a microtask and only the newest geometry per anchor is sent.
+- **Latest-wins batching.** Messages queued in the same task are merged in a microtask. The newest placement and size for each anchor are sent separately.
 - **Small, tree-shakeable output.** Every function is a separate export with `sideEffects: false`. If you only need `createViewAnchor`, you pay for 528 bytes gzipped.
 
 Numbers from `pnpm benchmark` on Node.js 24, Apple M4, median of three fresh processes:
@@ -159,7 +159,7 @@ if (decoded.ok) { /* check the sender, then apply only newer messages */ }
 
 Two rules keep the ordering correct:
 
-- **Keep one publisher per `{ anchorId, generation }`.** The batcher and `createGeometrySequenceGuard` remember the highest sequence number seen for each anchor. A publisher rebuilt for the same address restarts at sequence 1 and its messages are dropped as stale. In React, hold it in `useMemo` or `useRef`. Bump `generation` when you really want a fresh start.
+- **Keep one publisher per `{ anchorId, generation }`.** The batcher and `createGeometrySequenceGuard` remember the highest sequence number for each message kind per anchor. A publisher rebuilt for the same address restarts at sequence 1 and its messages are dropped as stale. In React, hold it in `useMemo` or `useRef`. Bump `generation` when you really want a fresh start.
 - **A synchronous publisher returns `false` to say "not accepted".** The core then retries the same geometry on the next trigger. A batching publisher returns `true` once queued and owns any later retries.
 
 The full contract is in [docs/protocol.md](./docs/protocol.md).
