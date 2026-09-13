@@ -70,10 +70,7 @@ beforeEach(() => {
     'requestAnimationFrame',
     raf.request as unknown as typeof window.requestAnimationFrame,
   )
-  vi.stubGlobal(
-    'cancelAnimationFrame',
-    raf.cancel as unknown as typeof window.cancelAnimationFrame,
-  )
+  vi.stubGlobal('cancelAnimationFrame', raf.cancel as unknown as typeof window.cancelAnimationFrame)
 })
 
 afterEach(() => {
@@ -123,8 +120,7 @@ const mk = (
     followGeometry?: boolean
     guardDisplayNone?: boolean
   },
-): ReturnType<typeof createPlacementAnchor> =>
-  createPlacementAnchor(el, o as PlacementOpts)
+): ReturnType<typeof createPlacementAnchor> => createPlacementAnchor(el, o as PlacementOpts)
 
 describe('createPlacementAnchor — followGeometry sentinel must not detach on a transient zero-area poll', () => {
   // Core bug: slot goes 0×0 transiently during a dock relayout; RO never

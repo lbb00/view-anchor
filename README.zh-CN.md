@@ -34,20 +34,20 @@
 
 以下数字来自 `pnpm benchmark`，环境是 Node.js 24、Apple M4，取三个全新进程的中位数：
 
-| 操作 | 数据量 | 耗时 |
-| --- | ---: | ---: |
-| `measurePlacement` | 1,000,000 次 | 8.9 ms |
-| 发布一条 placement 消息 | 1,000,000 次 | 7.3 ms |
-| 解码合法 batch | 100,000 条 | 3.1 ms |
-| 所有锚点切换到新 generation | 10,000 个锚点 | 1.7 ms |
-| 已有 100,000 个锚点时只 flush 一条 | 1 条 | 0.008 ms |
+| 操作                               |        数据量 |     耗时 |
+| ---------------------------------- | ------------: | -------: |
+| `measurePlacement`                 |  1,000,000 次 |   8.9 ms |
+| 发布一条 placement 消息            |  1,000,000 次 |   7.3 ms |
+| 解码合法 batch                     |    100,000 条 |   3.1 ms |
+| 所有锚点切换到新 generation        | 10,000 个锚点 |   1.7 ms |
+| 已有 100,000 个锚点时只 flush 一条 |          1 条 | 0.008 ms |
 
-| 入口 | gzip 后 |
-| --- | ---: |
-| `view-anchor`（全部） | 2.6 KB |
-| 单独 `createViewAnchor` | 528 B |
-| `view-anchor/protocol` | 1.4 KB |
-| `view-anchor/react` | 2.0 KB |
+| 入口                    | gzip 后 |
+| ----------------------- | ------: |
+| `view-anchor`（全部）   |  2.6 KB |
+| 单独 `createViewAnchor` |   528 B |
+| `view-anchor/protocol`  |  1.4 KB |
+| `view-anchor/react`     |  2.0 KB |
 
 这些是同一台机器上的 Node.js 微基准，不包含 DOM layout、Electron IPC 和 structured clone，这几项请在你自己的应用里测。方法、内存数据和 V8 trace 见 [docs/performance-report.md](./docs/performance-report.md)。
 
@@ -154,7 +154,9 @@ const publish = createPlacementMessagePublisher(
 
 // 接收方（主进程、宿主页面等）
 const decoded = decodeGeometryWireValue(received, { maxMessages: 100 })
-if (decoded.ok) { /* 先校验发送方，再只应用更新的消息 */ }
+if (decoded.ok) {
+  /* 先校验发送方，再只应用更新的消息 */
+}
 ```
 
 两条规则保证顺序正确：
@@ -166,23 +168,23 @@ if (decoded.ok) { /* 先校验发送方，再只应用更新的消息 */ }
 
 ## API
 
-| 导出 | 类型 | 用途 |
-|---|---|---|
-| `createViewAnchor(target, opts)` | 函数 | 测量 DOM 元素并发布实时 bounds。零矩形表示已收起。 |
-| `createPlacementAnchor(target, opts)` | 函数 | 同一个核心，带显式 `Placement` 可见性、可选的 `followScroll` / `followGeometry` / `guardDisplayNone`，以及 `pulse()`。 |
-| `measurePlacement(target)` | 函数 | 纯测量：把目标矩形包成 `{ visible: true, bounds }`。 |
-| `createSizeAdvertiser(target, opts)` | 函数 | 反向：把视图自身的内容尺寸报告给宿主。 |
-| `useViewAnchor(opts)`，来自 `view-anchor/react` | Hook | 返回用于占位元素的 ref 回调。 |
-| `usePlacementAnchor(opts)`，来自 `view-anchor/react` | Hook | `Placement` API 的 React 适配，包含 `followScroll` 和 `followGeometry`。 |
-| `Bounds` | 类型 | CSS 像素单位的 `{ x, y, width, height }`。 |
-| `Placement` | 类型 | `{ visible: true; bounds } \| { visible: false }`。 |
-| `ViewAnchorOptions` / `ViewAnchorHandle` | 类型 | `createViewAnchor` 的选项和句柄。 |
-| `PlacementAnchorOptions` / `PlacementAnchorHandle` | 类型 | `createPlacementAnchor` 的选项和句柄。 |
-| `UseViewAnchorOptions` / `ViewAnchorRef`，来自 `view-anchor/react` | 类型 | `useViewAnchor` 的选项和 ref 形状。 |
-| `UsePlacementAnchorOptions` / `PlacementAnchorRef`，来自 `view-anchor/react` | 类型 | `usePlacementAnchor` 的选项和 ref 形状。 |
-| `AdvertisedAxis` / `AdvertisedSize` | 类型 | 反向方向的轴和负载类型。 |
-| `SizeAdvertiserOptions` / `SizeAdvertiserHandle` | 类型 | `createSizeAdvertiser` 的选项和句柄。 |
-| `view-anchor/protocol` | 函数 + 类型 | 带版本的消息、严格解码、序列守卫、消息 publisher 和微任务批处理。 |
+| 导出                                                                         | 类型        | 用途                                                                                                                   |
+| ---------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `createViewAnchor(target, opts)`                                             | 函数        | 测量 DOM 元素并发布实时 bounds。零矩形表示已收起。                                                                     |
+| `createPlacementAnchor(target, opts)`                                        | 函数        | 同一个核心，带显式 `Placement` 可见性、可选的 `followScroll` / `followGeometry` / `guardDisplayNone`，以及 `pulse()`。 |
+| `measurePlacement(target)`                                                   | 函数        | 纯测量：把目标矩形包成 `{ visible: true, bounds }`。                                                                   |
+| `createSizeAdvertiser(target, opts)`                                         | 函数        | 反向：把视图自身的内容尺寸报告给宿主。                                                                                 |
+| `useViewAnchor(opts)`，来自 `view-anchor/react`                              | Hook        | 返回用于占位元素的 ref 回调。                                                                                          |
+| `usePlacementAnchor(opts)`，来自 `view-anchor/react`                         | Hook        | `Placement` API 的 React 适配，包含 `followScroll` 和 `followGeometry`。                                               |
+| `Bounds`                                                                     | 类型        | CSS 像素单位的 `{ x, y, width, height }`。                                                                             |
+| `Placement`                                                                  | 类型        | `{ visible: true; bounds } \| { visible: false }`。                                                                    |
+| `ViewAnchorOptions` / `ViewAnchorHandle`                                     | 类型        | `createViewAnchor` 的选项和句柄。                                                                                      |
+| `PlacementAnchorOptions` / `PlacementAnchorHandle`                           | 类型        | `createPlacementAnchor` 的选项和句柄。                                                                                 |
+| `UseViewAnchorOptions` / `ViewAnchorRef`，来自 `view-anchor/react`           | 类型        | `useViewAnchor` 的选项和 ref 形状。                                                                                    |
+| `UsePlacementAnchorOptions` / `PlacementAnchorRef`，来自 `view-anchor/react` | 类型        | `usePlacementAnchor` 的选项和 ref 形状。                                                                               |
+| `AdvertisedAxis` / `AdvertisedSize`                                          | 类型        | 反向方向的轴和负载类型。                                                                                               |
+| `SizeAdvertiserOptions` / `SizeAdvertiserHandle`                             | 类型        | `createSizeAdvertiser` 的选项和句柄。                                                                                  |
+| `view-anchor/protocol`                                                       | 函数 + 类型 | 带版本的消息、严格解码、序列守卫、消息 publisher 和微任务批处理。                                                      |
 
 ## 文档
 
@@ -193,7 +195,7 @@ if (decoded.ok) { /* 先校验发送方，再只应用更新的消息 */ }
 
 ## 参与贡献
 
-欢迎提 issue 和 pull request。提交前请运行 `pnpm lint`、`pnpm check-types`、`pnpm test` 和 `pnpm build`。`pnpm benchmark` 会重新生成性能报告。
+欢迎提 issue 和 pull request。提交前请运行 `pnpm lint`、`pnpm format:check`、`pnpm check-types`、`pnpm test` 和 `pnpm build`。`pnpm benchmark` 会重新生成性能报告。
 
 ## 许可证
 

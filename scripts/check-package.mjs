@@ -27,7 +27,13 @@ try {
   const tarball = readdirSync(packDirectory).find((name) => name.endsWith('.tgz'))
   if (!tarball) throw new Error('pnpm pack did not create a tarball')
 
-  execFileSync('tar', ['-xzf', join(packDirectory, tarball), '-C', packageDirectory, '--strip-components=1'])
+  execFileSync('tar', [
+    '-xzf',
+    join(packDirectory, tarball),
+    '-C',
+    packageDirectory,
+    '--strip-components=1',
+  ])
 
   const protocol = runNode(`
     const protocol = await import('view-anchor/protocol')
@@ -49,11 +55,14 @@ try {
   const reactDirectory = join(consumerDirectory, 'node_modules', 'react')
   mkdirSync(reactDirectory)
   writeFileSync(join(reactDirectory, 'package.json'), '{"type":"module"}')
-  writeFileSync(join(reactDirectory, 'index.js'), `
+  writeFileSync(
+    join(reactDirectory, 'index.js'),
+    `
     export const useCallback = (callback) => callback
     export const useEffect = () => undefined
     export const useRef = (value) => ({ current: value })
-  `)
+  `,
+  )
 
   const core = runNode(`
     const core = await import('view-anchor')
@@ -71,25 +80,45 @@ try {
     throw new Error(`The core package entry must load with React installed:\n${core.stderr}`)
   }
 
-  const react = runNode("const react = await import('view-anchor/react'); if (typeof react.useViewAnchor !== 'function') throw new Error('Missing React export')")
+  const react = runNode(
+    "const react = await import('view-anchor/react'); if (typeof react.useViewAnchor !== 'function') throw new Error('Missing React export')",
+  )
   if (react.status !== 0) {
     throw new Error(`The React package entry must load with React installed:\n${react.stderr}`)
   }
 
   const typecheckFile = join(consumerDirectory, 'compat.mts')
-  writeFileSync(typecheckFile, `
+  writeFileSync(
+    typecheckFile,
+    `
     import { useViewAnchor } from 'view-anchor'
     import type { UseViewAnchorOptions, ViewAnchorRef } from 'view-anchor'
     const options = { present: true, publish: () => undefined } satisfies UseViewAnchorOptions
     const ref: ViewAnchorRef = useViewAnchor(options)
     void ref
-  `)
-  execFileSync('pnpm', [
-    'exec', 'tsc', '--noEmit', '--strict', '--module', 'NodeNext',
-    '--moduleResolution', 'NodeNext', '--lib', 'ES2022,DOM', typecheckFile,
-  ], { cwd: projectRoot, stdio: 'inherit' })
+  `,
+  )
+  execFileSync(
+    'pnpm',
+    [
+      'exec',
+      'tsc',
+      '--noEmit',
+      '--strict',
+      '--module',
+      'NodeNext',
+      '--moduleResolution',
+      'NodeNext',
+      '--lib',
+      'ES2022,DOM',
+      typecheckFile,
+    ],
+    { cwd: projectRoot, stdio: 'inherit' },
+  )
 
-  console.log('Package entry checks passed: protocol loads without React; root and React entries keep legacy React exports.')
+  console.log(
+    'Package entry checks passed: protocol loads without React; root and React entries keep legacy React exports.',
+  )
 } finally {
   rmSync(tempRoot, { recursive: true, force: true })
 }

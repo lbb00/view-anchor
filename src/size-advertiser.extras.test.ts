@@ -49,11 +49,7 @@ class FakeResizeObserver {
   }
   /** Post an arbitrary, possibly-degenerate entry verbatim (no box defaults).
    *  `target` defaults to the observed element when the caller omits it. */
-  fireRaw(entry: {
-    borderBoxSize?: RoSize[]
-    contentBoxSize?: RoSize[]
-    target?: Element
-  }): void {
+  fireRaw(entry: { borderBoxSize?: RoSize[]; contentBoxSize?: RoSize[]; target?: Element }): void {
     const target = entry.target ?? this.observed[0] ?? document.createElement('div')
     this.cb(
       [{ ...entry, target } as unknown as ResizeObserverEntry],
@@ -81,17 +77,11 @@ beforeEach(() => {
   rafIdCounter = 0
   cancelSpy.mockClear()
   vi.stubGlobal('ResizeObserver', FakeResizeObserver)
-  vi.stubGlobal(
-    'requestAnimationFrame',
-    fakeRaf as unknown as typeof window.requestAnimationFrame,
-  )
-  vi.stubGlobal(
-    'cancelAnimationFrame',
-    ((id: number) => {
-      cancelSpy(id)
-      rafQueue = rafQueue.filter((e) => e.id !== id)
-    }) as unknown as typeof window.cancelAnimationFrame,
-  )
+  vi.stubGlobal('requestAnimationFrame', fakeRaf as unknown as typeof window.requestAnimationFrame)
+  vi.stubGlobal('cancelAnimationFrame', ((id: number) => {
+    cancelSpy(id)
+    rafQueue = rafQueue.filter((e) => e.id !== id)
+  }) as unknown as typeof window.cancelAnimationFrame)
 })
 
 afterEach(() => {

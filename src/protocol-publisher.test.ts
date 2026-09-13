@@ -47,7 +47,14 @@ describe('versioned message publishers', () => {
     expect(publish({ visible: false })).toBe(true)
     expect(publish({ visible: true, bounds: { x: 1, y: 2, width: 3, height: 4 } })).toBe(true)
     expect(send.mock.calls.map(([message]) => message)).toEqual([
-      { v: 1, kind: 'placement', anchorId: 'editor', generation: 7, seq: 1, placement: { visible: false } },
+      {
+        v: 1,
+        kind: 'placement',
+        anchorId: 'editor',
+        generation: 7,
+        seq: 1,
+        placement: { visible: false },
+      },
       {
         v: 1,
         kind: 'placement',
@@ -61,9 +68,12 @@ describe('versioned message publishers', () => {
 
   it('treats false as rejected, increments a failed attempt, and propagates throws', () => {
     const failure = new Error('transport down')
-    const send = vi.fn<(message: GeometryMessage) => boolean | void>()
+    const send = vi
+      .fn<(message: GeometryMessage) => boolean | void>()
       .mockReturnValueOnce(false)
-      .mockImplementationOnce(() => { throw failure })
+      .mockImplementationOnce(() => {
+        throw failure
+      })
       .mockReturnValueOnce(true)
     const publish = createSizeMessagePublisher(address, send)
 
@@ -120,7 +130,14 @@ describe('createGeometryBatcher', () => {
     const batcher = createGeometryBatcher(send)
     batcher.publish(placementMessage({ seq: 1 }))
     batcher.publish(placementMessage({ seq: 2, placement: { visible: false } }))
-    batcher.publish({ v: 1, kind: 'size', anchorId: 'editor', generation: 8, seq: 1, size: { axis: 'block', extent: 30 } })
+    batcher.publish({
+      v: 1,
+      kind: 'size',
+      anchorId: 'editor',
+      generation: 8,
+      seq: 1,
+      size: { axis: 'block', extent: 30 },
+    })
     batcher.publish(placementMessage({ generation: 8, seq: 1 }))
     batcher.publish(placementMessage({ generation: 7, seq: 99 }))
 
@@ -132,7 +149,14 @@ describe('createGeometryBatcher', () => {
       kind: 'batch',
       messages: [
         placementMessage({ generation: 8, seq: 1 }),
-        { v: 1, kind: 'size', anchorId: 'editor', generation: 8, seq: 1, size: { axis: 'block', extent: 30 } },
+        {
+          v: 1,
+          kind: 'size',
+          anchorId: 'editor',
+          generation: 8,
+          seq: 1,
+          size: { axis: 'block', extent: 30 },
+        },
       ],
     })
   })
@@ -178,9 +202,7 @@ describe('createGeometryBatcher', () => {
     batcher.publish(placementMessage({ generation: 8, seq: 1 }))
     flushMicrotasks()
 
-    expect(send.mock.calls[0]![0].messages).toEqual([
-      placementMessage({ generation: 8, seq: 1 }),
-    ])
+    expect(send.mock.calls[0]![0].messages).toEqual([placementMessage({ generation: 8, seq: 1 })])
     expect(batcher.publish(oldSize)).toBe(true)
     expect(microtasks).toHaveLength(0)
   })
@@ -211,7 +233,9 @@ describe('createGeometryBatcher', () => {
   it('does not restore a reentrantly superseded generation after the old snapshot is accepted', () => {
     const holder: { batcher?: ReturnType<typeof createGeometryBatcher> } = {}
     const send = vi.fn<(batch: GeometryBatch) => boolean | void>(() => {
-      holder.batcher!.publish(placementMessage({ generation: 8, seq: 1, placement: { visible: false } }))
+      holder.batcher!.publish(
+        placementMessage({ generation: 8, seq: 1, placement: { visible: false } }),
+      )
     })
     const batcher = createGeometryBatcher(send)
     holder.batcher = batcher
@@ -219,7 +243,9 @@ describe('createGeometryBatcher', () => {
 
     flushMicrotasks()
     expect(batcher.flush()).toBe(true)
-    expect(send.mock.calls.map(([batch]) => [batch.messages[0]!.generation, batch.messages[0]!.seq])).toEqual([
+    expect(
+      send.mock.calls.map(([batch]) => [batch.messages[0]!.generation, batch.messages[0]!.seq]),
+    ).toEqual([
       [7, 1],
       [8, 1],
     ])
@@ -232,7 +258,9 @@ describe('createGeometryBatcher', () => {
       if (!firstSend) return true
       firstSend = false
       holder.batcher!.clear('editor')
-      holder.batcher!.publish(placementMessage({ generation: 7, seq: 0, placement: { visible: false } }))
+      holder.batcher!.publish(
+        placementMessage({ generation: 7, seq: 0, placement: { visible: false } }),
+      )
       return true
     })
     const batcher = createGeometryBatcher(send)
@@ -272,7 +300,8 @@ describe('createGeometryBatcher', () => {
   })
 
   it('retains a rejected snapshot and retries it from the next publish', () => {
-    const send = vi.fn<(batch: GeometryBatch) => boolean | void>()
+    const send = vi
+      .fn<(batch: GeometryBatch) => boolean | void>()
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true)
     const batcher = createGeometryBatcher(send)
@@ -280,20 +309,37 @@ describe('createGeometryBatcher', () => {
 
     flushMicrotasks()
     expect(send).toHaveBeenCalledTimes(1)
-    batcher.publish({ v: 1, kind: 'size', anchorId: 'editor', generation: 7, seq: 1, size: { axis: 'block', extent: 20 } })
+    batcher.publish({
+      v: 1,
+      kind: 'size',
+      anchorId: 'editor',
+      generation: 7,
+      seq: 1,
+      size: { axis: 'block', extent: 20 },
+    })
     flushMicrotasks()
 
     expect(send.mock.calls[1]![0].messages).toEqual([
       placementMessage(),
-      { v: 1, kind: 'size', anchorId: 'editor', generation: 7, seq: 1, size: { axis: 'block', extent: 20 } },
+      {
+        v: 1,
+        kind: 'size',
+        anchorId: 'editor',
+        generation: 7,
+        seq: 1,
+        size: { axis: 'block', extent: 20 },
+      },
     ])
   })
 
   it('turns asynchronous transport throws into onError and retains the snapshot', () => {
     const error = new Error('transport down')
     const onError = vi.fn()
-    const send = vi.fn<(batch: GeometryBatch) => boolean | void>()
-      .mockImplementationOnce(() => { throw error })
+    const send = vi
+      .fn<(batch: GeometryBatch) => boolean | void>()
+      .mockImplementationOnce(() => {
+        throw error
+      })
       .mockReturnValueOnce(true)
     const batcher = createGeometryBatcher(send, { onError })
     batcher.publish(placementMessage())
@@ -305,7 +351,9 @@ describe('createGeometryBatcher', () => {
 
   it('turns an explicit flush throw into false when no error handler is supplied', () => {
     const error = new Error('transport down')
-    const send = vi.fn<(batch: GeometryBatch) => boolean | void>(() => { throw error })
+    const send = vi.fn<(batch: GeometryBatch) => boolean | void>(() => {
+      throw error
+    })
     const batcher = createGeometryBatcher(send)
     batcher.publish(placementMessage())
 
@@ -316,7 +364,9 @@ describe('createGeometryBatcher', () => {
   it('reports an explicit flush throw to onError and returns false', () => {
     const error = new Error('transport down')
     const onError = vi.fn()
-    const send = vi.fn<(batch: GeometryBatch) => boolean | void>(() => { throw error })
+    const send = vi.fn<(batch: GeometryBatch) => boolean | void>(() => {
+      throw error
+    })
     const batcher = createGeometryBatcher(send, { onError })
     batcher.publish(placementMessage())
 
@@ -375,14 +425,15 @@ describe('createGeometryBatcher', () => {
     const send = vi.fn<(batch: GeometryBatch) => boolean | void>()
     const batcher = createGeometryBatcher(send)
     const count = 100_000
-    const publish = (index: number, generation: number) => batcher.publish({
-      v: 1,
-      kind: 'placement',
-      anchorId: `anchor-${index}`,
-      generation,
-      seq: 1,
-      placement: { visible: false },
-    })
+    const publish = (index: number, generation: number) =>
+      batcher.publish({
+        v: 1,
+        kind: 'placement',
+        anchorId: `anchor-${index}`,
+        generation,
+        seq: 1,
+        placement: { visible: false },
+      })
 
     for (let index = 0; index < count; index++) publish(index, 1)
     for (let index = 0; index < count; index++) publish(index, 2)

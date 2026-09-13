@@ -9,11 +9,18 @@ class FakeResizeObserver {
   constructor(readonly callback: ResizeObserverCallback) {
     FakeResizeObserver.instances.push(this)
   }
-  observe(element: Element): void { this.observed.push(element) }
+  observe(element: Element): void {
+    this.observed.push(element)
+  }
   disconnect(): void {}
-  fire(): void { this.callback([], this as unknown as ResizeObserver) }
+  fire(): void {
+    this.callback([], this as unknown as ResizeObserver)
+  }
   fireSize(blockSize: number): void {
-    this.callback([{ borderBoxSize: [{ blockSize, inlineSize: 0 }] }] as unknown as ResizeObserverEntry[], this as unknown as ResizeObserver)
+    this.callback(
+      [{ borderBoxSize: [{ blockSize, inlineSize: 0 }] }] as unknown as ResizeObserverEntry[],
+      this as unknown as ResizeObserver,
+    )
   }
 }
 
@@ -56,10 +63,21 @@ function element(rect = { left: 1, top: 2, width: 30, height: 40 }): {
 } {
   let current = rect
   const el = document.createElement('div')
-  vi.spyOn(el, 'getBoundingClientRect').mockImplementation(() => ({
-    left: current.left, top: current.top, width: current.width, height: current.height,
-  }) as DOMRect)
-  return { el, setRect: (next) => { current = next } }
+  vi.spyOn(el, 'getBoundingClientRect').mockImplementation(
+    () =>
+      ({
+        left: current.left,
+        top: current.top,
+        width: current.width,
+        height: current.height,
+      }) as DOMRect,
+  )
+  return {
+    el,
+    setRect: (next) => {
+      current = next
+    },
+  }
 }
 
 describe('publish acceptance', () => {
@@ -117,7 +135,9 @@ describe('publish acceptance', () => {
     expect(publish).toHaveBeenCalledTimes(2)
 
     setRect({ left: 5, top: 2, width: 30, height: 40 })
-    publish.mockImplementationOnce(() => { throw new Error('placement down') })
+    publish.mockImplementationOnce(() => {
+      throw new Error('placement down')
+    })
     expect(() => FakeResizeObserver.instances[0]!.fire()).toThrow('placement down')
     FakeResizeObserver.instances[0]!.fire()
     expect(publish).toHaveBeenCalledTimes(4)

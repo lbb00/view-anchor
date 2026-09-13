@@ -141,14 +141,32 @@ function aggregateTiming(reports, name) {
 
 function aggregateMemory(reports) {
   const aggregate = (values) => median(values)
-  const batcher = Object.fromEntries(['pending', 'retainedAfterFlush', 'afterClear'].map((state) => [state, {
-    heapDeltaBytes: aggregate(reports.map((report) => report.memory.batcher[state].heapDeltaBytes)),
-    rssDeltaBytes: aggregate(reports.map((report) => report.memory.batcher[state].rssDeltaBytes)),
-  }]))
-  const sequenceGuard = Object.fromEntries(['retained', 'afterClear'].map((state) => [state, {
-    heapDeltaBytes: aggregate(reports.map((report) => report.memory.sequenceGuard[state].heapDeltaBytes)),
-    rssDeltaBytes: aggregate(reports.map((report) => report.memory.sequenceGuard[state].rssDeltaBytes)),
-  }]))
+  const batcher = Object.fromEntries(
+    ['pending', 'retainedAfterFlush', 'afterClear'].map((state) => [
+      state,
+      {
+        heapDeltaBytes: aggregate(
+          reports.map((report) => report.memory.batcher[state].heapDeltaBytes),
+        ),
+        rssDeltaBytes: aggregate(
+          reports.map((report) => report.memory.batcher[state].rssDeltaBytes),
+        ),
+      },
+    ]),
+  )
+  const sequenceGuard = Object.fromEntries(
+    ['retained', 'afterClear'].map((state) => [
+      state,
+      {
+        heapDeltaBytes: aggregate(
+          reports.map((report) => report.memory.sequenceGuard[state].heapDeltaBytes),
+        ),
+        rssDeltaBytes: aggregate(
+          reports.map((report) => report.memory.sequenceGuard[state].rssDeltaBytes),
+        ),
+      },
+    ]),
+  )
   return { anchors: largeCount, batcher, sequenceGuard }
 }
 
@@ -331,9 +349,17 @@ async function runSampleIn(temporary) {
           ['core/measurePlacement', 'src/index.ts', 'measurePlacement'],
           ['core/createSizeAdvertiser', 'src/index.ts', 'createSizeAdvertiser'],
           ['protocol/decodeGeometryWireValue', 'src/protocol.ts', 'decodeGeometryWireValue'],
-          ['protocol/createGeometrySequenceGuard', 'src/protocol.ts', 'createGeometrySequenceGuard'],
+          [
+            'protocol/createGeometrySequenceGuard',
+            'src/protocol.ts',
+            'createGeometrySequenceGuard',
+          ],
           ['protocol/createGeometryBatcher', 'src/protocol.ts', 'createGeometryBatcher'],
-          ['protocol/createPlacementMessagePublisher', 'src/protocol.ts', 'createPlacementMessagePublisher'],
+          [
+            'protocol/createPlacementMessagePublisher',
+            'src/protocol.ts',
+            'createPlacementMessagePublisher',
+          ],
           ['protocol/createSizeMessagePublisher', 'src/protocol.ts', 'createSizeMessagePublisher'],
           ['react/useViewAnchor', 'src/react.ts', 'useViewAnchor'],
           ['react/usePlacementAnchor', 'src/react.ts', 'usePlacementAnchor'],
@@ -379,7 +405,9 @@ if (process.argv.includes('--sample')) {
       generatedAt: new Date().toISOString(),
       environment: first.environment,
       method: { ...first.method, freshProcesses },
-      timings: Object.fromEntries(Object.keys(first.timings).map((name) => [name, aggregateTiming(reports, name)])),
+      timings: Object.fromEntries(
+        Object.keys(first.timings).map((name) => [name, aggregateTiming(reports, name)]),
+      ),
       memory: aggregateMemory(reports),
       exportedBundleSize: first.exportedBundleSize,
     }

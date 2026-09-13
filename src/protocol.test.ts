@@ -6,25 +6,27 @@ import {
   decodeGeometryWireValue,
 } from './protocol.js'
 
-const placement = (overrides: Record<string, unknown> = {}): PlacementMessage => ({
-  v: 1,
-  kind: 'placement',
-  anchorId: 'main-view',
-  generation: 0,
-  seq: 0,
-  placement: { visible: true, bounds: { x: -10, y: 20, width: 30, height: 40 } },
-  ...overrides,
-} as PlacementMessage)
+const placement = (overrides: Record<string, unknown> = {}): PlacementMessage =>
+  ({
+    v: 1,
+    kind: 'placement',
+    anchorId: 'main-view',
+    generation: 0,
+    seq: 0,
+    placement: { visible: true, bounds: { x: -10, y: 20, width: 30, height: 40 } },
+    ...overrides,
+  }) as PlacementMessage
 
-const size = (overrides: Record<string, unknown> = {}): SizeMessage => ({
-  v: 1,
-  kind: 'size',
-  anchorId: 'main-view',
-  generation: 0,
-  seq: 0,
-  size: { axis: 'block', extent: 40 },
-  ...overrides,
-} as SizeMessage)
+const size = (overrides: Record<string, unknown> = {}): SizeMessage =>
+  ({
+    v: 1,
+    kind: 'size',
+    anchorId: 'main-view',
+    generation: 0,
+    seq: 0,
+    size: { axis: 'block', extent: 40 },
+    ...overrides,
+  }) as SizeMessage
 
 function decode(value: unknown, maxMessages = 10) {
   return decodeGeometryWireValue(value, { maxMessages })
@@ -64,7 +66,13 @@ describe('decodeGeometryWireValue', () => {
     { ...placement(), placement: { visible: true } },
     { ...placement(), placement: { visible: true, bounds: { x: 0, y: 0, width: -1, height: 1 } } },
     { ...placement(), placement: { visible: true, bounds: { x: 0.5, y: 0, width: 1, height: 1 } } },
-    { ...placement(), placement: { visible: true, bounds: { x: 0, y: Number.POSITIVE_INFINITY, width: 1, height: 1 } } },
+    {
+      ...placement(),
+      placement: {
+        visible: true,
+        bounds: { x: 0, y: Number.POSITIVE_INFINITY, width: 1, height: 1 },
+      },
+    },
     { ...size(), size: { axis: 'diagonal', extent: 1 } },
     { ...size(), size: { axis: 'inline', extent: -1 } },
     { ...size(), size: { axis: 'inline', extent: Number.NaN } },

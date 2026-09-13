@@ -34,20 +34,20 @@ Geometry updates fire on every resize and, when following a drag, on every anima
 
 Numbers from `pnpm benchmark` on Node.js 24, Apple M4, median of three fresh processes:
 
-| Operation | Volume | Time |
-| --- | ---: | ---: |
-| `measurePlacement` | 1,000,000 calls | 8.9 ms |
-| Publish a placement message | 1,000,000 calls | 7.3 ms |
-| Decode a valid batch | 100,000 messages | 3.1 ms |
-| Move all anchors to a new generation | 10,000 anchors | 1.7 ms |
-| Flush one message with 100,000 anchors already tracked | 1 message | 0.008 ms |
+| Operation                                              |           Volume |     Time |
+| ------------------------------------------------------ | ---------------: | -------: |
+| `measurePlacement`                                     |  1,000,000 calls |   8.9 ms |
+| Publish a placement message                            |  1,000,000 calls |   7.3 ms |
+| Decode a valid batch                                   | 100,000 messages |   3.1 ms |
+| Move all anchors to a new generation                   |   10,000 anchors |   1.7 ms |
+| Flush one message with 100,000 anchors already tracked |        1 message | 0.008 ms |
 
-| Entry | Gzipped |
-| --- | ---: |
-| `view-anchor` (everything) | 2.6 KB |
-| `createViewAnchor` alone | 528 B |
-| `view-anchor/protocol` | 1.4 KB |
-| `view-anchor/react` | 2.0 KB |
+| Entry                      | Gzipped |
+| -------------------------- | ------: |
+| `view-anchor` (everything) |  2.6 KB |
+| `createViewAnchor` alone   |   528 B |
+| `view-anchor/protocol`     |  1.4 KB |
+| `view-anchor/react`        |  2.0 KB |
 
 These are same-machine Node.js microbenchmarks. They do not include DOM layout, Electron IPC, or structured clone, so measure those in your own app. Methodology, memory figures, and V8 traces are in [docs/performance-report.md](./docs/performance-report.md).
 
@@ -154,7 +154,9 @@ const publish = createPlacementMessagePublisher(
 
 // receiving side (main process, host page, ...)
 const decoded = decodeGeometryWireValue(received, { maxMessages: 100 })
-if (decoded.ok) { /* check the sender, then apply only newer messages */ }
+if (decoded.ok) {
+  /* check the sender, then apply only newer messages */
+}
 ```
 
 Two rules keep the ordering correct:
@@ -166,23 +168,23 @@ The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 ## API
 
-| Export | Kind | Purpose |
-|---|---|---|
-| `createViewAnchor(target, opts)` | function | Measure a DOM element and publish live bounds. A zero rect means collapsed. |
-| `createPlacementAnchor(target, opts)` | function | Same core with explicit `Placement` visibility, opt-in `followScroll` / `followGeometry` / `guardDisplayNone`, and `pulse()`. |
-| `measurePlacement(target)` | function | Pure measurement: wraps the target rect as `{ visible: true, bounds }`. |
-| `createSizeAdvertiser(target, opts)` | function | Reverse direction: report the view's own content size to the host. |
-| `useViewAnchor(opts)` from `view-anchor/react` | hook | Returns a ref callback for a placeholder element. |
-| `usePlacementAnchor(opts)` from `view-anchor/react` | hook | React adapter for the `Placement` API, including `followScroll` and `followGeometry`. |
-| `Bounds` | type | `{ x, y, width, height }` in CSS pixels. |
-| `Placement` | type | `{ visible: true; bounds } \| { visible: false }`. |
-| `ViewAnchorOptions` / `ViewAnchorHandle` | type | Options and handle for `createViewAnchor`. |
-| `PlacementAnchorOptions` / `PlacementAnchorHandle` | type | Options and handle for `createPlacementAnchor`. |
-| `UseViewAnchorOptions` / `ViewAnchorRef` from `view-anchor/react` | type | Options and ref shape for `useViewAnchor`. |
-| `UsePlacementAnchorOptions` / `PlacementAnchorRef` from `view-anchor/react` | type | Options and ref shape for `usePlacementAnchor`. |
-| `AdvertisedAxis` / `AdvertisedSize` | type | Axis and payload types for the reverse direction. |
-| `SizeAdvertiserOptions` / `SizeAdvertiserHandle` | type | Options and handle for `createSizeAdvertiser`. |
-| `view-anchor/protocol` | functions + types | Versioned messages, strict decoding, sequence guards, message publishers, and microtask batching. |
+| Export                                                                      | Kind              | Purpose                                                                                                                       |
+| --------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `createViewAnchor(target, opts)`                                            | function          | Measure a DOM element and publish live bounds. A zero rect means collapsed.                                                   |
+| `createPlacementAnchor(target, opts)`                                       | function          | Same core with explicit `Placement` visibility, opt-in `followScroll` / `followGeometry` / `guardDisplayNone`, and `pulse()`. |
+| `measurePlacement(target)`                                                  | function          | Pure measurement: wraps the target rect as `{ visible: true, bounds }`.                                                       |
+| `createSizeAdvertiser(target, opts)`                                        | function          | Reverse direction: report the view's own content size to the host.                                                            |
+| `useViewAnchor(opts)` from `view-anchor/react`                              | hook              | Returns a ref callback for a placeholder element.                                                                             |
+| `usePlacementAnchor(opts)` from `view-anchor/react`                         | hook              | React adapter for the `Placement` API, including `followScroll` and `followGeometry`.                                         |
+| `Bounds`                                                                    | type              | `{ x, y, width, height }` in CSS pixels.                                                                                      |
+| `Placement`                                                                 | type              | `{ visible: true; bounds } \| { visible: false }`.                                                                            |
+| `ViewAnchorOptions` / `ViewAnchorHandle`                                    | type              | Options and handle for `createViewAnchor`.                                                                                    |
+| `PlacementAnchorOptions` / `PlacementAnchorHandle`                          | type              | Options and handle for `createPlacementAnchor`.                                                                               |
+| `UseViewAnchorOptions` / `ViewAnchorRef` from `view-anchor/react`           | type              | Options and ref shape for `useViewAnchor`.                                                                                    |
+| `UsePlacementAnchorOptions` / `PlacementAnchorRef` from `view-anchor/react` | type              | Options and ref shape for `usePlacementAnchor`.                                                                               |
+| `AdvertisedAxis` / `AdvertisedSize`                                         | type              | Axis and payload types for the reverse direction.                                                                             |
+| `SizeAdvertiserOptions` / `SizeAdvertiserHandle`                            | type              | Options and handle for `createSizeAdvertiser`.                                                                                |
+| `view-anchor/protocol`                                                      | functions + types | Versioned messages, strict decoding, sequence guards, message publishers, and microtask batching.                             |
 
 ## Documentation
 
@@ -193,7 +195,7 @@ The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 ## Contributing
 
-Issues and pull requests are welcome. Before submitting, run `pnpm lint`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` regenerates the performance report.
+Issues and pull requests are welcome. Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` regenerates the performance report.
 
 ## License
 

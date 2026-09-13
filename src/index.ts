@@ -2,15 +2,8 @@
  * view-anchor: keeps an external surface aligned with a DOM element's geometry.
  */
 
-export {
-  createViewAnchor,
-  measurePlacement,
-  createPlacementAnchor,
-} from './view-anchor.js'
-export type {
-  PlacementAnchorOptions,
-  PlacementAnchorHandle,
-} from './view-anchor.js'
+export { createViewAnchor, measurePlacement, createPlacementAnchor } from './view-anchor.js'
+export type { PlacementAnchorOptions, PlacementAnchorHandle } from './view-anchor.js'
 export type {
   Bounds,
   Placement,

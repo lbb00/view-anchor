@@ -35,9 +35,7 @@ import * as viewAnchorModule from './view-anchor.js'
 // The shape the explicit API must produce/consume. Mirrored locally (not
 // imported) so these tests describe the *target* contract independently of
 // whether the `Placement` type already exists in types.ts.
-type ExpectedPlacement =
-  | { visible: true; bounds: Bounds }
-  | { visible: false }
+type ExpectedPlacement = { visible: true; bounds: Bounds } | { visible: false }
 
 // ── ResizeObserver stub (same style as view-anchor.test.ts) ──────────
 
@@ -70,25 +68,18 @@ beforeEach(() => {
 
   const realAdd = window.addEventListener.bind(window)
   const realRemove = window.removeEventListener.bind(window)
-  vi.spyOn(window, 'addEventListener').mockImplementation(
-    (type: string, ...rest: unknown[]) => {
-      if (type === 'resize') leakedResize.push(rest[0])
-      return (realAdd as unknown as (...a: unknown[]) => void)(type, ...rest)
-    },
-  )
-  vi.spyOn(window, 'removeEventListener').mockImplementation(
-    (type: string, ...rest: unknown[]) => {
-      if (type === 'resize')
-        leakedResize = leakedResize.filter((h) => h !== rest[0])
-      return (realRemove as unknown as (...a: unknown[]) => void)(type, ...rest)
-    },
-  )
+  vi.spyOn(window, 'addEventListener').mockImplementation((type: string, ...rest: unknown[]) => {
+    if (type === 'resize') leakedResize.push(rest[0])
+    return (realAdd as unknown as (...a: unknown[]) => void)(type, ...rest)
+  })
+  vi.spyOn(window, 'removeEventListener').mockImplementation((type: string, ...rest: unknown[]) => {
+    if (type === 'resize') leakedResize = leakedResize.filter((h) => h !== rest[0])
+    return (realRemove as unknown as (...a: unknown[]) => void)(type, ...rest)
+  })
 })
 
 afterEach(() => {
-  leakedResize.forEach((h) =>
-    window.removeEventListener('resize', h as EventListener),
-  )
+  leakedResize.forEach((h) => window.removeEventListener('resize', h as EventListener))
   leakedResize = []
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -96,12 +87,10 @@ afterEach(() => {
 
 // ── Element fixture (jsdom getBoundingClientRect returns zeros) ───────
 
-function buildElement(rect: {
-  x: number
-  y: number
-  w: number
-  h: number
-}): { el: HTMLElement; setRect: (next: typeof rect) => void } {
+function buildElement(rect: { x: number; y: number; w: number; h: number }): {
+  el: HTMLElement
+  setRect: (next: typeof rect) => void
+} {
   const el = document.createElement('div')
   let current = rect
   vi.spyOn(el, 'getBoundingClientRect').mockImplementation(

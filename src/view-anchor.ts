@@ -1,22 +1,11 @@
-import type {
-  Bounds,
-  Placement,
-  Publisher,
-  ViewAnchorOptions,
-  ViewAnchorHandle,
-} from './types.js'
+import type { Bounds, Placement, Publisher, ViewAnchorOptions, ViewAnchorHandle } from './types.js'
 
 const ZERO: Bounds = { x: 0, y: 0, width: 0, height: 0 }
 
 // Round to integer pixels. Width and height are clamped to >= 0 (0 represents
 // a collapsed rect). Coordinates (x, y) can be negative when an element is
 // scrolled out of view; clamping them to 0 would pin the view to the screen edge.
-const clampRect = (r: {
-  x: number
-  y: number
-  width: number
-  height: number
-}): Bounds => ({
+const clampRect = (r: { x: number; y: number; width: number; height: number }): Bounds => ({
   x: Math.round(r.x),
   y: Math.round(r.y),
   width: Math.max(0, Math.round(r.width)),
@@ -38,10 +27,7 @@ const clampRect = (r: {
  * adding requestAnimationFrame would add a second frame of visual lag during drag
  * operations. High-frequency updates are deduplicated against the last accepted rect.
  */
-export function createViewAnchor(
-  target: HTMLElement,
-  opts: ViewAnchorOptions,
-): ViewAnchorHandle {
+export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): ViewAnchorHandle {
   let present = opts.present
   let publish = opts.publish
   let observer: ResizeObserver | null = null
@@ -59,7 +45,8 @@ export function createViewAnchor(
       !Number.isFinite(r.top) ||
       !Number.isFinite(r.width) ||
       !Number.isFinite(r.height)
-    ) return null
+    )
+      return null
     return clampRect({ x: r.left, y: r.top, width: r.width, height: r.height })
   }
 
@@ -252,12 +239,9 @@ export function createPlacementAnchor(
         !Number.isFinite(p.bounds.y) ||
         !Number.isFinite(p.bounds.width) ||
         !Number.isFinite(p.bounds.height))
-    ) return null
-    if (
-      guardDisplayNone &&
-      p.visible &&
-      (p.bounds.width === 0 || p.bounds.height === 0)
-    ) {
+    )
+      return null
+    if (guardDisplayNone && p.visible && (p.bounds.width === 0 || p.bounds.height === 0)) {
       return { visible: false }
     }
     return p
@@ -315,7 +299,10 @@ export function createPlacementAnchor(
     }
     invalidFrames = 0
     if (!p.visible) {
-      if (shouldCloseOnHiddenPoll()) { sentinelDeadline = null; return }
+      if (shouldCloseOnHiddenPoll()) {
+        sentinelDeadline = null
+        return
+      }
       if (!disposed && visible && followGeometry) {
         rafId = requestAnimationFrame(sentinelFrame)
       } else {

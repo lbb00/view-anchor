@@ -67,10 +67,7 @@ function decodeSize(value: unknown): AdvertisedSize | undefined {
 function decodeMessage(value: unknown): GeometryMessage | undefined {
   if (!isRecord(value) || value.v !== GEOMETRY_PROTOCOL_VERSION) return undefined
   if (typeof value.anchorId !== 'string' || value.anchorId.length === 0) return undefined
-  if (
-    !isNonNegativeSafeInteger(value.generation) ||
-    !isNonNegativeSafeInteger(value.seq)
-  ) {
+  if (!isNonNegativeSafeInteger(value.generation) || !isNonNegativeSafeInteger(value.seq)) {
     return undefined
   }
   const address = {
@@ -81,9 +78,7 @@ function decodeMessage(value: unknown): GeometryMessage | undefined {
   }
   if (value.kind === 'placement') {
     const placement = decodePlacement(value.placement)
-    return placement === undefined
-      ? undefined
-      : { ...address, kind: 'placement', placement }
+    return placement === undefined ? undefined : { ...address, kind: 'placement', placement }
   }
   if (value.kind === 'size') {
     const size = decodeSize(value.size)
@@ -135,11 +130,7 @@ export interface GeometrySequenceGuard {
 }
 
 // -1 means that this generation has not seen the corresponding message kind.
-type GeometrySequenceState = [
-  generation: number,
-  placementSeq: number,
-  sizeSeq: number,
-]
+type GeometrySequenceState = [generation: number, placementSeq: number, sizeSeq: number]
 
 /**
  * Keeps one generation floor per anchor and a sequence high-water mark per
@@ -154,14 +145,11 @@ export function createGeometrySequenceGuard(): GeometrySequenceGuard {
     accept(message) {
       const current = latest.get(message.anchorId)
       if (current === undefined || message.generation > current[0]) {
-        latest.set(
-          message.anchorId,
-          [
-            message.generation,
-            message.kind === 'placement' ? message.seq : -1,
-            message.kind === 'size' ? message.seq : -1,
-          ],
-        )
+        latest.set(message.anchorId, [
+          message.generation,
+          message.kind === 'placement' ? message.seq : -1,
+          message.kind === 'size' ? message.seq : -1,
+        ])
         return true
       }
       if (message.generation < current[0]) return false
