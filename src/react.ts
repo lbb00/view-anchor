@@ -5,11 +5,7 @@ import {
   type PlacementAnchorHandle,
   type PlacementAnchorOptions,
 } from './view-anchor.js'
-import type {
-  Bounds,
-  ViewAnchorHandle,
-  ViewAnchorOptions,
-} from './types.js'
+import type { Bounds, ViewAnchorHandle, ViewAnchorOptions } from './types.js'
 
 export interface UseViewAnchorOptions extends ViewAnchorOptions {
   /**
@@ -172,10 +168,7 @@ export function useViewAnchor(options: UseViewAnchorOptions): ViewAnchorRef {
   )
 }
 
-const placementAdapter: LifecycleAdapter<
-  PlacementAnchorOptions,
-  PlacementAnchorHandle
-> = {
+const placementAdapter: LifecycleAdapter<PlacementAnchorOptions, PlacementAnchorHandle> = {
   create: createPlacementAnchor,
   update(handle, options) {
     // In React, an omitted option represents "off" for that render,
@@ -196,9 +189,7 @@ const placementAdapter: LifecycleAdapter<
 }
 
 /** Bind the explicit Placement API to a DOM element callback ref. */
-export function usePlacementAnchor(
-  options: UsePlacementAnchorOptions,
-): PlacementAnchorRef {
+export function usePlacementAnchor(options: UsePlacementAnchorOptions): PlacementAnchorRef {
   return useAnchorRef(
     options,
     [

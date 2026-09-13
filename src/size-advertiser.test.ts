@@ -77,19 +77,13 @@ beforeEach(() => {
   rafIdCounter = 0
   cancelSpy.mockClear()
   vi.stubGlobal('ResizeObserver', FakeResizeObserver)
-  vi.stubGlobal(
-    'requestAnimationFrame',
-    fakeRaf as unknown as typeof window.requestAnimationFrame,
-  )
-  vi.stubGlobal(
-    'cancelAnimationFrame',
-    ((id: number) => {
-      cancelSpy(id)
-      // A cancelled RAF must never fire — evict it so flushRafs() can't run a
-      // callback the advertiser cancelled.
-      rafQueue = rafQueue.filter((e) => e.id !== id)
-    }) as unknown as typeof window.cancelAnimationFrame,
-  )
+  vi.stubGlobal('requestAnimationFrame', fakeRaf as unknown as typeof window.requestAnimationFrame)
+  vi.stubGlobal('cancelAnimationFrame', ((id: number) => {
+    cancelSpy(id)
+    // A cancelled RAF must never fire — evict it so flushRafs() can't run a
+    // callback the advertiser cancelled.
+    rafQueue = rafQueue.filter((e) => e.id !== id)
+  }) as unknown as typeof window.cancelAnimationFrame)
 })
 
 afterEach(() => {
@@ -118,9 +112,7 @@ function buildElement(): { el: HTMLElement; rectSpy: ReturnType<typeof vi.fn> } 
   const rectSpy = vi.fn(() => {
     throw new Error('getBoundingClientRect must not be called by the advertiser')
   })
-  vi.spyOn(el, 'getBoundingClientRect').mockImplementation(
-    rectSpy as unknown as () => DOMRect,
-  )
+  vi.spyOn(el, 'getBoundingClientRect').mockImplementation(rectSpy as unknown as () => DOMRect)
   return { el, rectSpy }
 }
 
@@ -317,9 +309,7 @@ describe('createSizeAdvertiser: handle methods', () => {
 
     expect(typeof handle.update).toBe('function')
     expect(typeof handle.dispose).toBe('function')
-    expect('present' in (handle as unknown as Record<string, unknown>)).toBe(
-      false,
-    )
+    expect('present' in (handle as unknown as Record<string, unknown>)).toBe(false)
   })
 })
 

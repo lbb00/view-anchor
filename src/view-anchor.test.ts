@@ -53,14 +53,8 @@ beforeEach(() => {
   resizeAddSpy.mockClear()
   resizeRemoveSpy.mockClear()
   vi.stubGlobal('ResizeObserver', FakeResizeObserver)
-  vi.stubGlobal(
-    'requestAnimationFrame',
-    rafSpy as unknown as typeof window.requestAnimationFrame,
-  )
-  vi.stubGlobal(
-    'cancelAnimationFrame',
-    cancelSpy as unknown as typeof window.cancelAnimationFrame,
-  )
+  vi.stubGlobal('requestAnimationFrame', rafSpy as unknown as typeof window.requestAnimationFrame)
+  vi.stubGlobal('cancelAnimationFrame', cancelSpy as unknown as typeof window.cancelAnimationFrame)
 
   // Spy on window resize listener add/remove so we can assert the anchor
   // installs exactly one resize listener when present, and removes it on
@@ -68,32 +62,26 @@ beforeEach(() => {
   // dispatching a real 'resize' event still works.
   const realAdd = window.addEventListener.bind(window)
   const realRemove = window.removeEventListener.bind(window)
-  vi.spyOn(window, 'addEventListener').mockImplementation(
-    (type: string, ...rest: unknown[]) => {
-      if (type === 'resize') {
-        resizeAddSpy(...rest)
-        leakedResize.push(rest[0])
-      }
-      return (realAdd as unknown as (...a: unknown[]) => void)(type, ...rest)
-    },
-  )
-  vi.spyOn(window, 'removeEventListener').mockImplementation(
-    (type: string, ...rest: unknown[]) => {
-      if (type === 'resize') {
-        resizeRemoveSpy(...rest)
-        leakedResize = leakedResize.filter((h) => h !== rest[0])
-      }
-      return (realRemove as unknown as (...a: unknown[]) => void)(type, ...rest)
-    },
-  )
+  vi.spyOn(window, 'addEventListener').mockImplementation((type: string, ...rest: unknown[]) => {
+    if (type === 'resize') {
+      resizeAddSpy(...rest)
+      leakedResize.push(rest[0])
+    }
+    return (realAdd as unknown as (...a: unknown[]) => void)(type, ...rest)
+  })
+  vi.spyOn(window, 'removeEventListener').mockImplementation((type: string, ...rest: unknown[]) => {
+    if (type === 'resize') {
+      resizeRemoveSpy(...rest)
+      leakedResize = leakedResize.filter((h) => h !== rest[0])
+    }
+    return (realRemove as unknown as (...a: unknown[]) => void)(type, ...rest)
+  })
 })
 
 afterEach(() => {
   // Remove resize listeners leaked by undisposed anchors before restoring
   // the spies, so they can't fire in (and pollute) a later test.
-  leakedResize.forEach((h) =>
-    window.removeEventListener('resize', h as EventListener),
-  )
+  leakedResize.forEach((h) => window.removeEventListener('resize', h as EventListener))
   leakedResize = []
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -119,12 +107,10 @@ function lastObserver(): FakeResizeObserver {
 // `setRect` lets a test move the element after the anchor was created (to
 // prove a tick reads the *current* rect, not a captured one).
 
-function buildElement(rect: {
-  x: number
-  y: number
-  w: number
-  h: number
-}): { el: HTMLElement; setRect: (next: typeof rect) => void } {
+function buildElement(rect: { x: number; y: number; w: number; h: number }): {
+  el: HTMLElement
+  setRect: (next: typeof rect) => void
+} {
   const el = document.createElement('div')
   let current = rect
   vi.spyOn(el, 'getBoundingClientRect').mockImplementation(
@@ -607,9 +593,7 @@ describe('createPlacementAnchor — display:none / first-frame guard (opt-in)', 
 
     // Target goes display:none: IO reports not-intersecting + a zero-area box.
     setRect({ x: 0, y: 0, w: 0, h: 0 })
-    firstIO().trigger([
-      { isIntersecting: false, boundingClientRect: { width: 0, height: 0 } },
-    ])
+    firstIO().trigger([{ isIntersecting: false, boundingClientRect: { width: 0, height: 0 } }])
 
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenLastCalledWith(HIDDEN)
@@ -618,9 +602,7 @@ describe('createPlacementAnchor — display:none / first-frame guard (opt-in)', 
     // Target comes back with a real box. A subsequent tick (ResizeObserver or
     // IO intersecting) re-measures a non-zero box → visible again.
     setRect({ x: 5, y: 6, w: 100, h: 120 })
-    firstIO().trigger([
-      { isIntersecting: true, boundingClientRect: { width: 100, height: 120 } },
-    ])
+    firstIO().trigger([{ isIntersecting: true, boundingClientRect: { width: 100, height: 120 } }])
 
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenLastCalledWith({
@@ -709,9 +691,7 @@ describe('createPlacementAnchor — display:none / first-frame guard (opt-in)', 
 
     // A late IO callback after dispose must be inert (disposed read live).
     setRect({ x: 0, y: 0, w: 0, h: 0 })
-    io.trigger([
-      { isIntersecting: false, boundingClientRect: { width: 0, height: 0 } },
-    ])
+    io.trigger([{ isIntersecting: false, boundingClientRect: { width: 0, height: 0 } }])
 
     expect(publish).not.toHaveBeenCalled()
   })
@@ -833,8 +813,7 @@ describe('createPlacementAnchor — scroll + windowed RAF geometry sentinel (opt
       followScroll?: boolean
       followGeometry?: boolean
     },
-  ): PulseHandle =>
-    createPlacementAnchor(el, o as FollowOpts) as PulseHandle
+  ): PulseHandle => createPlacementAnchor(el, o as FollowOpts) as PulseHandle
 
   // ── A. followScroll — capture-phase ancestor scroll ──────────
 
@@ -895,13 +874,8 @@ describe('createPlacementAnchor — scroll + windowed RAF geometry sentinel (opt
 
     const scrollCb = scrollAdd![1]
     handle.dispose()
-    const scrollRemove = removeCalls.find(
-      ([t, cb]) => t === 'scroll' && cb === scrollCb,
-    )
-    expect(
-      scrollRemove,
-      'the same scroll listener must be removed on dispose',
-    ).toBeDefined()
+    const scrollRemove = removeCalls.find(([t, cb]) => t === 'scroll' && cb === scrollCb)
+    expect(scrollRemove, 'the same scroll listener must be removed on dispose').toBeDefined()
 
     addSpy.mockRestore()
     removeSpy.mockRestore()
@@ -1121,9 +1095,7 @@ describe('createPlacementAnchor — scroll + windowed RAF geometry sentinel (opt
     setRect({ x: 5, y: 6, w: 120, h: 130 })
     firstObserver().fire()
     window.dispatchEvent(new Event('resize'))
-    handle.update({ visible: false, publish } as Parameters<
-      typeof createPlacementAnchor
-    >[1])
+    handle.update({ visible: false, publish } as Parameters<typeof createPlacementAnchor>[1])
 
     expect(raf.request).not.toHaveBeenCalled()
     expect(raf.cancel).not.toHaveBeenCalled()

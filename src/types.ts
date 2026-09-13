@@ -25,9 +25,7 @@ export type Publisher<T> = (value: T) => PublishResult
  * Distinguishes an intentionally visible but zero-sized element ({ visible: true, bounds: 0x0 })
  * from a hidden or detached element ({ visible: false }).
  */
-export type Placement =
-  | { visible: true; bounds: Bounds }
-  | { visible: false }
+export type Placement = { visible: true; bounds: Bounds } | { visible: false }
 
 export interface ViewAnchorOptions {
   /**

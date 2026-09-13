@@ -62,10 +62,7 @@ function lastObserver(): FakeResizeObserver {
 // A real <div> rendered by React, but with a stubbed getBoundingClientRect.
 // We stub on the element React hands us via a ref so the rect is
 // deterministic in jsdom (which always returns zeros otherwise).
-function stubRect(
-  el: HTMLElement,
-  rect: { x: number; y: number; w: number; h: number },
-): void {
+function stubRect(el: HTMLElement, rect: { x: number; y: number; w: number; h: number }): void {
   vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
     x: rect.x,
     y: rect.y,
@@ -124,10 +121,7 @@ describe('useViewAnchor: ref attach', () => {
     const publish = vi.fn()
     act(() => {
       render(
-        <Anchored
-          options={{ present: true, publish }}
-          rect={{ x: 11, y: 22, w: 333, h: 444 }}
-        />,
+        <Anchored options={{ present: true, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />,
       )
     })
 
@@ -145,10 +139,7 @@ describe('useViewAnchor: ref attach', () => {
     const publish = vi.fn()
     act(() => {
       render(
-        <Anchored
-          options={{ present: false, publish }}
-          rect={{ x: 11, y: 22, w: 333, h: 444 }}
-        />,
+        <Anchored options={{ present: false, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />,
       )
     })
 
@@ -271,19 +262,13 @@ describe('useViewAnchor: opts/deps change', () => {
   it('present change false → true re-publishes the current rect', () => {
     const publish = vi.fn()
     const { rerender } = render(
-      <Anchored
-        options={{ present: false, publish }}
-        rect={{ x: 3, y: 4, w: 60, h: 70 }}
-      />,
+      <Anchored options={{ present: false, publish }} rect={{ x: 3, y: 4, w: 60, h: 70 }} />,
     )
     publish.mockClear()
 
     act(() => {
       rerender(
-        <Anchored
-          options={{ present: true, publish }}
-          rect={{ x: 3, y: 4, w: 60, h: 70 }}
-        />,
+        <Anchored options={{ present: true, publish }} rect={{ x: 3, y: 4, w: 60, h: 70 }} />,
       )
     })
 
@@ -294,19 +279,13 @@ describe('useViewAnchor: opts/deps change', () => {
     const publish = vi.fn()
     const base = { present: true, publish }
     const { rerender } = render(
-      <Anchored
-        options={{ ...base, deps: ['tab-a'] }}
-        rect={{ x: 1, y: 1, w: 200, h: 200 }}
-      />,
+      <Anchored options={{ ...base, deps: ['tab-a'] }} rect={{ x: 1, y: 1, w: 200, h: 200 }} />,
     )
     publish.mockClear()
 
     act(() => {
       rerender(
-        <Anchored
-          options={{ ...base, deps: ['tab-b'] }}
-          rect={{ x: 1, y: 1, w: 200, h: 200 }}
-        />,
+        <Anchored options={{ ...base, deps: ['tab-b'] }} rect={{ x: 1, y: 1, w: 200, h: 200 }} />,
       )
     })
 
@@ -347,10 +326,7 @@ describe('useViewAnchor: unmount disposes', () => {
   it('unmounting the component publishes ZERO once, disconnects the observer, and never publishes after', async () => {
     const publish = vi.fn()
     const { unmount } = render(
-      <Anchored
-        options={{ present: true, publish }}
-        rect={{ x: 0, y: 0, w: 100, h: 100 }}
-      />,
+      <Anchored options={{ present: true, publish }} rect={{ x: 0, y: 0, w: 100, h: 100 }} />,
     )
     const ro = firstObserver()
     publish.mockClear()
@@ -507,10 +483,7 @@ describe('useViewAnchor — StrictMode resilience', () => {
     act(() => {
       render(
         <StrictMode>
-          <Anchored
-            options={{ present: true, publish }}
-            rect={{ x: 11, y: 22, w: 333, h: 444 }}
-          />
+          <Anchored options={{ present: true, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />
         </StrictMode>,
       )
     })
@@ -537,10 +510,7 @@ describe('useViewAnchor — StrictMode resilience', () => {
     act(() => {
       render(
         <StrictMode>
-          <Anchored
-            options={{ present: true, publish }}
-            rect={{ x: 5, y: 6, w: 70, h: 80 }}
-          />
+          <Anchored options={{ present: true, publish }} rect={{ x: 5, y: 6, w: 70, h: 80 }} />
         </StrictMode>,
       )
     })
@@ -640,9 +610,7 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
 
     expect(publish).not.toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
     expect(publish).not.toHaveBeenCalled()
-    expect(FakeResizeObserver.instances.filter((item) => !item.disconnected)).toEqual([
-      observer,
-    ])
+    expect(FakeResizeObserver.instances.filter((item) => !item.disconnected)).toEqual([observer])
 
     let realCleanup!: () => void
     act(() => {

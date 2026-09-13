@@ -13,7 +13,8 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const htmlPath = resolve(root, 'docs/index.html')
 
-const START = '/* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts by `pnpm build:docs`; do not edit */'
+const START =
+  '/* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts by `pnpm build:docs`; do not edit */'
 const END = '/* __VIEW_ANCHOR_CORE_END__ */'
 
 const result = await build({

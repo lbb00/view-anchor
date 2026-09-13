@@ -39,11 +39,13 @@ if (scenario === 'batcher') {
   batcher.clear()
   globalThis.gc()
   const afterClear = memoryDelta()
-  process.stdout.write(JSON.stringify({
-    pending,
-    retainedAfterFlush,
-    afterClear,
-  }))
+  process.stdout.write(
+    JSON.stringify({
+      pending,
+      retainedAfterFlush,
+      afterClear,
+    }),
+  )
 } else if (scenario === 'guard') {
   const guard = createGeometrySequenceGuard()
   for (let index = 0; index < count; index++) guard.accept(message(index))
@@ -52,9 +54,11 @@ if (scenario === 'batcher') {
   guard.clear()
   globalThis.gc()
   const afterClear = memoryDelta()
-  process.stdout.write(JSON.stringify({
-    sequenceGuard: { retained, afterClear },
-  }))
+  process.stdout.write(
+    JSON.stringify({
+      sequenceGuard: { retained, afterClear },
+    }),
+  )
 } else {
   throw new Error(`unknown memory benchmark scenario: ${scenario}`)
 }

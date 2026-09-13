@@ -79,10 +79,7 @@ beforeEach(() => {
     'requestAnimationFrame',
     raf.request as unknown as typeof window.requestAnimationFrame,
   )
-  vi.stubGlobal(
-    'cancelAnimationFrame',
-    raf.cancel as unknown as typeof window.cancelAnimationFrame,
-  )
+  vi.stubGlobal('cancelAnimationFrame', raf.cancel as unknown as typeof window.cancelAnimationFrame)
 })
 
 afterEach(() => {
@@ -148,8 +145,7 @@ type FollowOpts = Parameters<typeof createPlacementAnchor>[1] & {
 const mk = (
   el: HTMLElement,
   o: { visible: boolean; publish: (p: Placement) => void; followGeometry?: boolean },
-): ReturnType<typeof createPlacementAnchor> =>
-  createPlacementAnchor(el, o as FollowOpts)
+): ReturnType<typeof createPlacementAnchor> => createPlacementAnchor(el, o as FollowOpts)
 
 describe('createPlacementAnchor — press-pause-drag (followGeometry sentinel must survive a held pause)', () => {
   // 1. THE BUG. pointerdown opens the window; the user then hesitates for a
