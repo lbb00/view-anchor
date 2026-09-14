@@ -8,53 +8,53 @@
 
 | 场景 | 数据量 | 当前中位数 | 三进程中位数（ms） |
 | --- | ---: | ---: | --- |
-| 所有锚点进入下一 generation | 10,000 | 1.7407ms | 1.5772、1.7407、1.8334 |
-| 逐个 `clear(anchorId)` | 10,000 | 1.0757ms | 1.0757、1.0241、1.0794 |
-| 已有 100,000 个历史锚点后只 flush 1 条 | 1 | 0.0082ms | 0.0102、0.0068、0.0082 |
-| 发布 placement envelope | 1,000,000 次 | 7.2710ms | 7.4852、7.2113、7.2710 |
-| 同一 anchor 连续 publish + flush | 100,000 次 | 8.8899ms | 8.8899、8.8434、9.2207 |
-| 解码合法 batch | 100,000 条 | 3.0990ms | 3.0990、2.9431、3.2170 |
-| 解码末项非法 batch | 100,000 条 | 3.3382ms | 3.3195、3.6282、3.3382 |
-| sequence guard 接收并清理 | 100,000 条 | 12.8928ms | 12.9085、12.8928、12.8151 |
-| `measurePlacement` | 1,000,000 次 | 8.9269ms | 8.9269、8.5498、9.0800 |
+| 所有锚点进入下一 generation | 10,000 | 1.5440ms | 1.5440、1.5517、1.4217 |
+| 逐个 `clear(anchorId)` | 10,000 | 0.9214ms | 0.9230、0.8706、0.9214 |
+| 已有 100,000 个历史锚点后只 flush 1 条 | 1 | 0.0067ms | 0.0059、0.0073、0.0067 |
+| 发布 placement envelope | 1,000,000 次 | 6.6062ms | 6.3072、6.6649、6.6062 |
+| 同一 anchor 连续 publish + flush | 100,000 次 | 8.4688ms | 8.0620、8.9530、8.4688 |
+| 解码合法 batch | 100,000 条 | 2.7766ms | 2.6953、3.0069、2.7766 |
+| 解码末项非法 batch | 100,000 条 | 3.2230ms | 3.3725、3.2230、2.9416 |
+| sequence guard 接收并清理 | 100,000 条 | 11.5324ms | 11.5672、11.1703、11.5324 |
+| `measurePlacement` | 1,000,000 次 | 8.0442ms | 8.0442、7.9074、8.1189 |
 
 ## 内存
 
-每个状态在独立 Node.js 进程中执行，并在读数前显式 GC。表中为三个独立进程的中位数增量；heap 是 V8 保留堆，RSS 是进程常驻集合大小，二者不应混用。清理对象后，分配器也不一定立即把内存页归还给操作系统，所以 `afterClear` 的 RSS 不能当作仍有等量 JavaScript 对象存活。
+每个状态在独立 Node.js 进程中执行，并在读数前显式 GC。表中为三个独立进程的中位数增量；heap 是 V8 保留堆，RSS 是进程常驻集合大小，二者不应混用。清理对象后，分配器也不一定立即把内存页归还给操作系统，所以 `afterClear` 的 RSS 不能当作仍有等量 JavaScript 对象存活。`dispose()` 会取消观察并释放目标元素与回调引用；这一行为由独立的 WeakRef 回归测试覆盖，不用下表的 RSS 来判断。
 
 性能 harness 将 `queueMicrotask` 替换为 no-op，然后显式调用 `flush()`；这是刻意测量 batcher 的 pending/retained 状态，**不是**真实宿主 microtask 调度路径。
 
 | 状态（100,000 个 anchor） | heap 增量 | RSS 增量 |
 | --- | ---: | ---: |
-| batcher 待 flush | 26,320,176B | 45,858,816B |
-| batcher 成功 flush 后 | 13,303,872B | 43,696,128B |
-| batcher `clear()` 后 | 34,432B | 40,026,112B |
-| sequence guard 保留状态 | 14,088,840B | 27,099,136B |
-| sequence guard `clear()` 后 | 19,568B | 23,461,888B |
+| batcher 待 flush | 26,320,176B | 45,744,128B |
+| batcher 成功 flush 后 | 13,304,000B | 43,548,672B |
+| batcher `clear()` 后 | 34,560B | 39,895,040B |
+| sequence guard 保留状态 | 14,088,840B | 27,246,592B |
+| sequence guard `clear()` 后 | 19,568B | 23,576,576B |
 
 ## 实际导出代码体积
 
-使用 esbuild bundle、tree-shaking 和 minify，且将 `react` 作为 peer external。测量的是实际执行 JavaScript，不是 npm tarball、source map 或声明文件。
+使用 Rolldown bundle、tree-shaking 和 minify，且将 `react` 作为 peer external。测量的是实际执行 JavaScript，不是 npm tarball、source map 或声明文件。
 
 | 完整入口 | raw | gzip | brotli |
 | --- | ---: | ---: | ---: |
-| `view-anchor` | 6,627B | 2,588B | 2,297B |
-| `view-anchor/protocol` | 3,581B | 1,412B | 1,276B |
-| `view-anchor/react` | 5,472B | 2,023B | 1,797B |
+| `view-anchor` | 6,728B | 2,545B | 2,252B |
+| `view-anchor/protocol` | 3,573B | 1,378B | 1,243B |
+| `view-anchor/react` | 5,646B | 2,036B | 1,789B |
 
 | 单独导出 | raw | gzip | brotli |
 | --- | ---: | ---: | ---: |
-| `createViewAnchor` | 987B | 528B | 472B |
-| `createPlacementAnchor` | 3,246B | 1,246B | 1,120B |
-| `measurePlacement` | 282B | 196B | 167B |
-| `createSizeAdvertiser` | 1,350B | 780B | 680B |
-| `decodeGeometryWireValue` | 1,472B | 664B | 570B |
-| `createGeometrySequenceGuard` | 396B | 258B | 229B |
-| `createGeometryBatcher` | 1,357B | 637B | 579B |
-| `createPlacementMessagePublisher` | 200B | 165B | 135B |
-| `createSizeMessagePublisher` | 185B | 162B | 129B |
-| `useViewAnchor` | 2,116B | 984B | 885B |
-| `usePlacementAnchor` | 4,421B | 1,718B | 1,549B |
+| `createViewAnchor` | 1,026B | 544B | 477B |
+| `createPlacementAnchor` | 3,264B | 1,253B | 1,112B |
+| `measurePlacement` | 283B | 195B | 168B |
+| `createSizeAdvertiser` | 1,391B | 782B | 693B |
+| `decodeGeometryWireValue` | 1,456B | 657B | 563B |
+| `createGeometrySequenceGuard` | 395B | 255B | 222B |
+| `createGeometryBatcher` | 1,380B | 639B | 586B |
+| `createPlacementMessagePublisher` | 174B | 151B | 112B |
+| `createSizeMessagePublisher` | 159B | 148B | 110B |
+| `useViewAnchor` | 2,183B | 1,002B | 894B |
+| `usePlacementAnchor` | 4,572B | 1,730B | 1,558B |
 
 ## V8 与边界
 

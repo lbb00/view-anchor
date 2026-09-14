@@ -5,10 +5,10 @@
 // double-click (file://), where browsers block ES-module imports as cross-origin
 // (origin "null"). Inlining keeps the page self-contained while still using the
 // real built artifact — the block below is GENERATED from src, never hand-edited.
-import { build } from 'esbuild'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { rolldown } from 'rolldown'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const htmlPath = resolve(root, 'docs/index.html')
@@ -17,15 +17,20 @@ const START =
   '/* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts by `pnpm build:docs`; do not edit */'
 const END = '/* __VIEW_ANCHOR_CORE_END__ */'
 
-const result = await build({
-  entryPoints: [resolve(root, 'src/view-anchor.ts')],
-  bundle: true,
-  format: 'iife',
-  globalName: '__viewAnchorCore',
-  target: 'es2020',
-  write: false,
+const bundle = await rolldown({
+  input: resolve(root, 'src/view-anchor.ts'),
+  transform: { target: 'es2020' },
 })
-const code = result.outputFiles[0].text.trim()
+let code
+try {
+  const { output } = await bundle.generate({
+    format: 'iife',
+    name: '__viewAnchorCore',
+  })
+  code = output[0].code.trim()
+} finally {
+  await bundle.close()
+}
 
 const html = readFileSync(htmlPath, 'utf8')
 const i = html.indexOf(START)

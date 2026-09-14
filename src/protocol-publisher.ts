@@ -79,6 +79,10 @@ export function createSizeMessagePublisher(
   }
 }
 
+// Terminal-state stand-in for `send` so a retained, disposed batcher does not
+// keep the caller's transport closure (and whatever it captured) alive.
+const NOOP_SEND: GeometryBatchSend = () => false
+
 /**
  * Coalesces same-task messages without adding a rendering-frame delay. It owns
  * no authorization policy: callers must associate addresses with trusted IPC
@@ -104,9 +108,12 @@ export function createGeometryBatcher(
   let scheduled = false
   let flushing = false
 
-  function report(error: unknown): void {
+  // `activeOptions` lets a caller keep reporting to the options object that
+  // was live when its flush() call started, even if a reentrant dispose()
+  // during send() has since cleared the instance-level `options` reference.
+  function report(activeOptions: GeometryBatcherOptions, error: unknown): void {
     try {
-      options.onError?.(error)
+      activeOptions.onError?.(error)
     } catch {
       // Error reporting must not turn scheduled delivery into an unhandled error.
     }
@@ -134,13 +141,17 @@ export function createGeometryBatcher(
       messages,
     }
 
+    // Captured before send() runs so a reentrant dispose() (which clears the
+    // instance-level `options`) cannot blind this call's own error report.
+    const activeOptions = options
+
     flushing = true
     try {
       let accepted: boolean
       try {
         accepted = send(batch) !== false
       } catch (error) {
-        report(error)
+        report(activeOptions, error)
         return false
       }
       if (!accepted) return false
@@ -231,6 +242,13 @@ export function createGeometryBatcher(
       disposed = true
       anchors.clear()
       pendingAnchors.clear()
+      // Callers may still mutate the original options object after
+      // construction (e.g. reassigning onError); flush() captures its own
+      // reference before send() runs, so an in-flight error report keeps
+      // reading that object even though dispose() drops the instance's
+      // long-lived reference here.
+      options = {}
+      send = NOOP_SEND
     },
   }
 }

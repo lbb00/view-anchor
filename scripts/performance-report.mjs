@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { brotliCompressSync, gzipSync } from 'node:zlib'
-import { buildSync } from 'esbuild'
+import { rolldown } from 'rolldown'
 
 if (typeof globalThis.gc !== 'function') {
   throw new Error('Run with node --expose-gc so memory measurements are explicit')
@@ -19,16 +19,17 @@ const anchorCount = 10_000
 const largeCount = 100_000
 const freshProcesses = 3
 
-function compile(entry, outfile) {
-  buildSync({
-    entryPoints: [fileURLToPath(new URL(entry, root))],
-    bundle: true,
-    format: 'esm',
+async function compile(entry, outfile) {
+  const bundle = await rolldown({
+    input: fileURLToPath(new URL(entry, root)),
     platform: 'node',
-    target: 'node24',
-    outfile,
-    logLevel: 'silent',
+    transform: { target: 'node24' },
   })
+  try {
+    await bundle.write({ file: outfile, format: 'esm' })
+  } finally {
+    await bundle.close()
+  }
 }
 
 function median(values) {
@@ -75,16 +76,20 @@ function preparedTiming(setup, run, cleanup) {
   }
 }
 
-function bundleSize(entry) {
-  const contents = buildSync({
-    entryPoints: [fileURLToPath(new URL(entry, root))],
-    bundle: true,
-    external: ['react'],
-    format: 'esm',
-    minify: true,
-    write: false,
-    logLevel: 'silent',
-  }).outputFiles[0].contents
+async function bundledContents(input, plugins = []) {
+  const bundle = await rolldown({ input, external: ['react'], plugins })
+  try {
+    const { output } = await bundle.generate({ format: 'esm', minify: true })
+    const chunk = output.find((asset) => asset.type === 'chunk')
+    if (!chunk) throw new Error('rolldown produced no JavaScript chunk')
+    return Buffer.from(chunk.code)
+  } finally {
+    await bundle.close()
+  }
+}
+
+async function bundleSize(entry) {
+  const contents = await bundledContents(fileURLToPath(new URL(entry, root)))
   return {
     rawBytes: contents.length,
     gzipBytes: gzipSync(contents).length,
@@ -92,20 +97,20 @@ function bundleSize(entry) {
   }
 }
 
-function exportSize(entry, name) {
-  const contents = buildSync({
-    stdin: {
-      contents: `export { ${name} } from './${entry}'`,
-      resolveDir: rootPath,
-      sourcefile: `${name}.mjs`,
+async function exportSize(entry, name) {
+  const virtualEntry = `\0view-anchor-export-size:${name}`
+  const source = fileURLToPath(new URL(entry, root))
+  const contents = await bundledContents(virtualEntry, [
+    {
+      name: 'view-anchor-export-size',
+      resolveId(id) {
+        return id === virtualEntry ? id : null
+      },
+      load(id) {
+        return id === virtualEntry ? `export { ${name} } from ${JSON.stringify(source)}` : null
+      },
     },
-    bundle: true,
-    external: ['react'],
-    format: 'esm',
-    minify: true,
-    write: false,
-    logLevel: 'silent',
-  }).outputFiles[0].contents
+  ])
   return {
     rawBytes: contents.length,
     gzipBytes: gzipSync(contents).length,
@@ -185,8 +190,8 @@ async function runSample() {
 async function runSampleIn(temporary) {
   const protocolPath = join(temporary, 'protocol.mjs')
   const corePath = join(temporary, 'core.mjs')
-  compile('src/protocol.ts', protocolPath)
-  compile('src/view-anchor.ts', corePath)
+  await compile('src/protocol.ts', protocolPath)
+  await compile('src/view-anchor.ts', corePath)
   const {
     createGeometryBatcher,
     createPlacementMessagePublisher,
@@ -338,32 +343,38 @@ async function runSampleIn(temporary) {
     },
     exportedBundleSize: {
       fullEntries: {
-        core: bundleSize('src/index.ts'),
-        protocol: bundleSize('src/protocol.ts'),
-        react: bundleSize('src/react.ts'),
+        core: await bundleSize('src/index.ts'),
+        protocol: await bundleSize('src/protocol.ts'),
+        react: await bundleSize('src/react.ts'),
       },
       treeShakenExports: Object.fromEntries(
-        [
-          ['core/createViewAnchor', 'src/index.ts', 'createViewAnchor'],
-          ['core/createPlacementAnchor', 'src/index.ts', 'createPlacementAnchor'],
-          ['core/measurePlacement', 'src/index.ts', 'measurePlacement'],
-          ['core/createSizeAdvertiser', 'src/index.ts', 'createSizeAdvertiser'],
-          ['protocol/decodeGeometryWireValue', 'src/protocol.ts', 'decodeGeometryWireValue'],
+        await Promise.all(
           [
-            'protocol/createGeometrySequenceGuard',
-            'src/protocol.ts',
-            'createGeometrySequenceGuard',
-          ],
-          ['protocol/createGeometryBatcher', 'src/protocol.ts', 'createGeometryBatcher'],
-          [
-            'protocol/createPlacementMessagePublisher',
-            'src/protocol.ts',
-            'createPlacementMessagePublisher',
-          ],
-          ['protocol/createSizeMessagePublisher', 'src/protocol.ts', 'createSizeMessagePublisher'],
-          ['react/useViewAnchor', 'src/react.ts', 'useViewAnchor'],
-          ['react/usePlacementAnchor', 'src/react.ts', 'usePlacementAnchor'],
-        ].map(([label, entry, name]) => [label, exportSize(entry, name)]),
+            ['core/createViewAnchor', 'src/index.ts', 'createViewAnchor'],
+            ['core/createPlacementAnchor', 'src/index.ts', 'createPlacementAnchor'],
+            ['core/measurePlacement', 'src/index.ts', 'measurePlacement'],
+            ['core/createSizeAdvertiser', 'src/index.ts', 'createSizeAdvertiser'],
+            ['protocol/decodeGeometryWireValue', 'src/protocol.ts', 'decodeGeometryWireValue'],
+            [
+              'protocol/createGeometrySequenceGuard',
+              'src/protocol.ts',
+              'createGeometrySequenceGuard',
+            ],
+            ['protocol/createGeometryBatcher', 'src/protocol.ts', 'createGeometryBatcher'],
+            [
+              'protocol/createPlacementMessagePublisher',
+              'src/protocol.ts',
+              'createPlacementMessagePublisher',
+            ],
+            [
+              'protocol/createSizeMessagePublisher',
+              'src/protocol.ts',
+              'createSizeMessagePublisher',
+            ],
+            ['react/useViewAnchor', 'src/react.ts', 'useViewAnchor'],
+            ['react/usePlacementAnchor', 'src/react.ts', 'usePlacementAnchor'],
+          ].map(async ([label, entry, name]) => [label, await exportSize(entry, name)]),
+        ),
       ),
     },
   }
