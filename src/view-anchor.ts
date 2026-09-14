@@ -2,6 +2,10 @@ import type { Bounds, Placement, Publisher, ViewAnchorOptions, ViewAnchorHandle 
 
 const ZERO: Bounds = { x: 0, y: 0, width: 0, height: 0 }
 
+// Replaces a disposed instance's publish callback so a retained handle does
+// not keep the caller's original callback (and whatever it captured) alive.
+const NOOP_PUBLISH = (): false => false
+
 // Round to integer pixels. Width and height are clamped to >= 0 (0 represents
 // a collapsed rect). Coordinates (x, y) can be negative when an element is
 // scrolled out of view; clamping them to 0 would pin the view to the screen edge.
@@ -31,6 +35,9 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
   let present = opts.present
   let publish = opts.publish
   let observer: ResizeObserver | null = null
+  // Local, clearable alias for the `target` parameter so dispose() can drop
+  // the strong reference without widening the public parameter's type.
+  let targetRef: HTMLElement | null = target
   // Last rect sent to publish. Reset on apply() so state changes (such as zoom)
   // force a re-publish even if the geometry did not change.
   let lastPublished: Bounds | null = null
@@ -38,7 +45,7 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
   let disposed = false
 
   const measure = (): Bounds | null => {
-    const r = target.getBoundingClientRect()
+    const r = targetRef!.getBoundingClientRect()
     // Drop ticks with non-finite values (NaN / Infinity cannot be sent over IPC).
     if (
       !Number.isFinite(r.left) ||
@@ -59,10 +66,12 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
     lastPublished = candidate
     try {
       const accepted = publish(candidate) !== false
-      if (!accepted && publicationRevision === attempt) lastPublished = previous
+      // A reentrant dispose() during publish() already cleared lastPublished;
+      // do not resurrect the pre-dispose value over that terminal state.
+      if (!accepted && publicationRevision === attempt && !disposed) lastPublished = previous
       return accepted
     } catch (error) {
-      if (publicationRevision === attempt) lastPublished = previous
+      if (publicationRevision === attempt && !disposed) lastPublished = previous
       throw error
     }
   }
@@ -80,7 +89,7 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
   const startObserving = (): void => {
     if (observer) return
     observer = new ResizeObserver(emit)
-    observer.observe(target)
+    observer.observe(targetRef!)
     window.addEventListener('resize', emit)
   }
 
@@ -119,6 +128,9 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
       if (disposed) return
       disposed = true
       stopObserving()
+      targetRef = null
+      publish = NOOP_PUBLISH
+      lastPublished = null
     },
   }
 }
@@ -207,6 +219,9 @@ export function createPlacementAnchor(
   let guardDisplayNone = opts.guardDisplayNone ?? false
   let followScroll = opts.followScroll ?? false
   let followGeometry = opts.followGeometry ?? false
+  // Local, clearable alias for the `target` parameter so dispose() can drop
+  // the strong reference without widening the public parameter's type.
+  let targetRef: HTMLElement | null = target
   let observer: ResizeObserver | null = null
   let io: IntersectionObserver | null = null
   let scrollListening = false
@@ -232,7 +247,7 @@ export function createPlacementAnchor(
   let sentinelDeadline: number | null = null
 
   const computePlacement = (): Placement | null => {
-    const p = measurePlacement(target)
+    const p = measurePlacement(targetRef!)
     if (
       p.visible &&
       (!Number.isFinite(p.bounds.x) ||
@@ -253,10 +268,12 @@ export function createPlacementAnchor(
     lastPublished = candidate
     try {
       const accepted = publish(candidate) !== false
-      if (!accepted && publicationRevision === attempt) lastPublished = previous
+      // A reentrant dispose() during publish() already cleared lastPublished;
+      // do not resurrect the pre-dispose value over that terminal state.
+      if (!accepted && publicationRevision === attempt && !disposed) lastPublished = previous
       return accepted
     } catch (error) {
-      if (publicationRevision === attempt) lastPublished = previous
+      if (publicationRevision === attempt && !disposed) lastPublished = previous
       throw error
     }
   }
@@ -385,7 +402,7 @@ export function createPlacementAnchor(
   const startOptionalObserving = (): void => {
     if (guardDisplayNone && !io && typeof IntersectionObserver !== 'undefined') {
       io = new IntersectionObserver(emit)
-      io.observe(target)
+      io.observe(targetRef!)
     }
     if (followScroll && !scrollListening) {
       window.addEventListener('scroll', onScroll, passiveCapture)
@@ -441,7 +458,7 @@ export function createPlacementAnchor(
   const startObserving = (): void => {
     if (observer) return
     observer = new ResizeObserver(emit)
-    observer.observe(target)
+    observer.observe(targetRef!)
     window.addEventListener('resize', emit)
     startOptionalObserving()
   }
@@ -490,6 +507,9 @@ export function createPlacementAnchor(
       if (disposed) return
       disposed = true
       stopObserving()
+      targetRef = null
+      publish = NOOP_PUBLISH
+      lastPublished = null
     },
     pulse(durationMs?: number): void {
       if (disposed || !followGeometry) return

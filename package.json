@@ -1,7 +1,7 @@
 {
   "name": "view-anchor",
   "version": "0.2.0",
-  "description": "High-performance geometry bridge that keeps anything outside the DOM (an Electron WebContentsView, a native webview, a cross-origin iframe) aligned to a DOM element: synchronous, deduplicated updates, optional versioned message batching, React adapter. ~2.6 KB gzipped, framework-free core.",
+  "description": "High-performance geometry bridge that keeps anything outside the DOM (an Electron WebContentsView, a native webview, a cross-origin iframe) aligned to a DOM element: synchronous, deduplicated updates, optional versioned message batching, React adapter, framework-free core.",
   "keywords": [
     "electron",
     "webcontentsview",
@@ -79,16 +79,17 @@
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.5.1",
     "@types/react": "^18.3.12",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.1.4",
-    "esbuild": "^0.28.1",
     "jsdom": "^29.0.2",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "typescript": "5.9.2",
     "oxfmt": "^0.67.0",
     "oxlint": "^1.82.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "rolldown": "1.2.7",
+    "typescript": "5.9.2",
     "vitest": "^4.1.4"
   },
   "publishConfig": {

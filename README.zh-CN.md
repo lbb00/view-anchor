@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/lbb00/view-anchor/main/assets/banner.svg" alt="view-anchor — 让 DOM 之外的画面贴合 DOM 元素" width="820">
 </p>
 
-> 高性能几何桥接库，让任何"不在 DOM 里的东西"始终贴合某个 DOM 元素：Electron 的 `WebContentsView`、其他桌面壳里的原生 webview、跨域 iframe，或者任何你能用一个矩形来定位的画面。每次移动和缩放都同步发布、不会重复发帧，整个包 gzip 后约 2.6 KB。
+> 高性能几何桥接库，让任何"不在 DOM 里的东西"始终贴合某个 DOM 元素：Electron 的 `WebContentsView`、其他桌面壳里的原生 webview、跨域 iframe，或者任何你能用一个矩形来定位的画面。每次移动和缩放都同步发布、不会重复发帧。
 
 [![npm version](https://img.shields.io/npm/v/view-anchor)](https://www.npmjs.com/package/view-anchor)
 [![npm downloads](https://img.shields.io/npm/dm/view-anchor)](https://www.npmjs.com/package/view-anchor)
@@ -23,33 +23,17 @@
 
 ## 为热路径而写
 
-几何更新在每次缩放时都会触发，跟随拖拽时更是每一帧都触发。这个库就是为这条路径写的，下面的数字是实测，不是推断：
+几何更新在每次缩放时都会触发，跟随拖拽时更是每一帧都触发。这个库让这条路径保持可控：
 
 - **同步发布。** 测量和发布在同一个 `ResizeObserver` 回调里完成。没有定时器，不多等一帧。
 - **先去重，再分配。** 和上一次已接受的矩形完全相同的结果，只比较四个数字就会被丢弃，不会创建任何对象。
 - **只在需要时逐帧跟随。** `followGeometry` 只在滚动、拖动分栏或显式调用 `pulse()` 时才开始按 `requestAnimationFrame` 轮询，矩形稳定后自动停止。空闲时开销为零，隐藏或无效目标最多跟 30 帧。
 - **generation 切换是 O(1)。** 协议层里，把某个锚点换到新的 generation 或清除它，不会碰到其他锚点。
 - **合并批量，只发最新。** 同一个任务里排队的消息在一个微任务里合并，每个锚点分别发送最新的位置和尺寸。
-- **体积小，可摇树。** 每个函数都是独立导出，并声明了 `sideEffects: false`。只用 `createViewAnchor` 的话，你只为 gzip 后 528 字节买单。
+- **销毁后释放引用。** 句柄 `dispose()` 后会停止观察，并释放目标元素和回调；调用方继续持有句柄也不会保留它们。
+- **核心紧凑，可摇树。** 每个函数都是独立导出，并声明了 `sideEffects: false`；完整核心导出 gzip 后小于 3 KB。
 
-以下数字来自 `pnpm benchmark`，环境是 Node.js 24、Apple M4，取三个全新进程的中位数：
-
-| 操作                               |        数据量 |     耗时 |
-| ---------------------------------- | ------------: | -------: |
-| `measurePlacement`                 |  1,000,000 次 |   8.9 ms |
-| 发布一条 placement 消息            |  1,000,000 次 |   7.3 ms |
-| 解码合法 batch                     |    100,000 条 |   3.1 ms |
-| 所有锚点切换到新 generation        | 10,000 个锚点 |   1.7 ms |
-| 已有 100,000 个锚点时只 flush 一条 |          1 条 | 0.008 ms |
-
-| 入口                    | gzip 后 |
-| ----------------------- | ------: |
-| `view-anchor`（全部）   |  2.6 KB |
-| 单独 `createViewAnchor` |   528 B |
-| `view-anchor/protocol`  |  1.4 KB |
-| `view-anchor/react`     |  2.0 KB |
-
-这些是同一台机器上的 Node.js 微基准，不包含 DOM layout、Electron IPC 和 structured clone，这几项请在你自己的应用里测。方法、内存数据和 V8 trace 见 [docs/performance-report.md](./docs/performance-report.md)。
+[性能报告](./docs/performance-report.md) 保留可复现的测量数据和环境。它适合比较同一台机器上的改动，不用于预测 DOM layout、Electron IPC、structured clone 或你的应用负载。
 
 ## 安装
 
@@ -195,7 +179,7 @@ if (decoded.ok) {
 
 ## 参与贡献
 
-欢迎提 issue 和 pull request。提交前请运行 `pnpm lint`、`pnpm format:check`、`pnpm check-types`、`pnpm test` 和 `pnpm build`。`pnpm benchmark` 会重新生成性能报告。
+欢迎提 issue 和 pull request。提交前请运行 `pnpm lint`、`pnpm format:check`、`pnpm check-types`、`pnpm test` 和 `pnpm build`。`pnpm benchmark` 会输出用于更新性能报告的数据。
 
 ## 许可证
 

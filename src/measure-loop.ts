@@ -14,6 +14,13 @@ export interface MeasureLoop<T> {
   dispose(): void
 }
 
+// Terminal-state stand-ins for cfg.produce/same/sink so a retained handle's
+// dispose()d loop does not keep the original closures (or what they
+// captured) alive. Guarded call sites never actually reach these.
+const NOOP_PRODUCE = (): null => null
+const NOOP_SAME = (): true => true
+const NOOP_SINK = (): false => false
+
 export function createMeasureLoop<T>(cfg: {
   /**
    * Produce the value to emit in the animation frame. Return null to skip
@@ -23,7 +30,9 @@ export function createMeasureLoop<T>(cfg: {
   same: (a: T, b: T) => boolean
   sink: import('./types.js').Publisher<T>
 }): MeasureLoop<T> {
-  const { produce, same, sink } = cfg
+  let produce = cfg.produce
+  let same = cfg.same
+  let sink = cfg.sink
   let rafId: number | null = null
   let active = false
   let disposed = false
@@ -31,15 +40,21 @@ export function createMeasureLoop<T>(cfg: {
   let publicationRevision = 0
 
   const deliver = (value: T): boolean => {
+    // A reentrant dispose() from produce()/same() (invoked by frame() just
+    // before this call) already cleared `last`; do not let this delivery
+    // attempt write over that terminal state.
+    if (disposed) return false
     const previous = last
     const attempt = ++publicationRevision
     last = value
     try {
       const accepted = sink(value) !== false
-      if (!accepted && publicationRevision === attempt) last = previous
+      // A reentrant dispose() during sink() already cleared `last`; do not
+      // resurrect the pre-dispose value over that terminal state.
+      if (!accepted && publicationRevision === attempt && !disposed) last = previous
       return accepted
     } catch (error) {
-      if (publicationRevision === attempt) last = previous
+      if (publicationRevision === attempt && !disposed) last = previous
       throw error
     }
   }
@@ -77,6 +92,10 @@ export function createMeasureLoop<T>(cfg: {
       if (disposed) return
       disposed = true
       cancel()
+      produce = NOOP_PRODUCE
+      same = NOOP_SAME
+      sink = NOOP_SINK
+      last = null
     },
   }
 }

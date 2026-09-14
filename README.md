@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/lbb00/view-anchor/main/assets/banner.svg" alt="view-anchor — keep anything outside the DOM aligned to a DOM element" width="820">
 </p>
 
-> A high-performance geometry bridge that keeps anything living outside the DOM aligned to a DOM element: an Electron `WebContentsView`, a native webview in another desktop shell, a cross-origin iframe, or any surface you position from a rectangle. Every move and resize is published synchronously with no duplicate frames, and the whole package is about 2.6 KB gzipped.
+> A high-performance geometry bridge that keeps anything living outside the DOM aligned to a DOM element: an Electron `WebContentsView`, a native webview in another desktop shell, a cross-origin iframe, or any surface you position from a rectangle. Every move and resize is published synchronously with no duplicate frames.
 
 [![npm version](https://img.shields.io/npm/v/view-anchor)](https://www.npmjs.com/package/view-anchor)
 [![npm downloads](https://img.shields.io/npm/dm/view-anchor)](https://www.npmjs.com/package/view-anchor)
@@ -23,33 +23,17 @@ The core has no dependency on Electron, a browser shell, React, or any layout li
 
 ## Built for the hot path
 
-Geometry updates fire on every resize and, when following a drag, on every animation frame. The library is written for that path and the numbers are measured, not assumed:
+Geometry updates fire on every resize and, when following a drag, on every animation frame. The library keeps that work predictable:
 
 - **Synchronous delivery.** Measurement and publish happen inside the same `ResizeObserver` callback. No timers, no extra frame of lag.
 - **Dedupe before allocate.** A rectangle identical to the last accepted one is rejected by comparing four numbers, before any object is created.
 - **Frame following only when needed.** `followGeometry` polls `requestAnimationFrame` during a scroll burst, a splitter drag, or an explicit `pulse()`, then closes itself once the rectangle settles. Idle cost is zero, and hidden or invalid targets are capped at 30 frames.
 - **O(1) generation changes.** In the protocol layer, moving an anchor to a new generation or clearing it does not touch other anchors.
 - **Latest-wins batching.** Messages queued in the same task are merged in a microtask. The newest placement and size for each anchor are sent separately.
-- **Small, tree-shakeable output.** Every function is a separate export with `sideEffects: false`. If you only need `createViewAnchor`, you pay for 528 bytes gzipped.
+- **Release on disposal.** Disposed handles stop observing and release their target and callback references, even when the caller keeps the handle.
+- **Compact, tree-shakeable core.** Functions are separate exports with `sideEffects: false`; the complete core export is under 3 KB gzipped.
 
-Numbers from `pnpm benchmark` on Node.js 24, Apple M4, median of three fresh processes:
-
-| Operation                                              |           Volume |     Time |
-| ------------------------------------------------------ | ---------------: | -------: |
-| `measurePlacement`                                     |  1,000,000 calls |   8.9 ms |
-| Publish a placement message                            |  1,000,000 calls |   7.3 ms |
-| Decode a valid batch                                   | 100,000 messages |   3.1 ms |
-| Move all anchors to a new generation                   |   10,000 anchors |   1.7 ms |
-| Flush one message with 100,000 anchors already tracked |        1 message | 0.008 ms |
-
-| Entry                      | Gzipped |
-| -------------------------- | ------: |
-| `view-anchor` (everything) |  2.6 KB |
-| `createViewAnchor` alone   |   528 B |
-| `view-anchor/protocol`     |  1.4 KB |
-| `view-anchor/react`        |  2.0 KB |
-
-These are same-machine Node.js microbenchmarks. They do not include DOM layout, Electron IPC, or structured clone, so measure those in your own app. Methodology, memory figures, and V8 traces are in [docs/performance-report.md](./docs/performance-report.md).
+The [performance report](./docs/performance-report.md) contains the reproducible measurements and their environment. They are useful for comparing changes on the same machine, not for predicting DOM layout, Electron IPC, structured clone, or your app's workload.
 
 ## Installation
 
@@ -195,7 +179,7 @@ The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 ## Contributing
 
-Issues and pull requests are welcome. Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` regenerates the performance report.
+Issues and pull requests are welcome. Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` prints the data used to update the performance report.
 
 ## License
 

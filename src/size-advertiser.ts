@@ -6,6 +6,10 @@ import type {
 } from './types.js'
 import { createMeasureLoop } from './measure-loop.js'
 
+// Replaces a disposed instance's publish callback so a retained handle does
+// not keep the caller's original callback (and whatever it captured) alive.
+const NOOP_PUBLISH = (): false => false
+
 /**
  * Report content size for a single axis back to the host.
  *
@@ -44,6 +48,9 @@ export function createSizeAdvertiser(
   })
 
   const onResize: ResizeObserverCallback = (entries) => {
+    // A callback queued before disconnect() can still fire once more; do not
+    // let it write `latest` after dispose() has already cleared it.
+    if (disposed) return
     const entry = entries[entries.length - 1]
     if (entry) {
       latest = entry.borderBoxSize?.[0] ?? entry.contentBoxSize?.[0] ?? latest
@@ -83,6 +90,8 @@ export function createSizeAdvertiser(
         observer = null
       }
       loop.dispose()
+      publish = NOOP_PUBLISH
+      latest = null
     },
   }
 }
