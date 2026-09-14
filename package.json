@@ -1,6 +1,6 @@
 {
   "name": "view-anchor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "High-performance geometry bridge that keeps anything outside the DOM (an Electron WebContentsView, a native webview, a cross-origin iframe) aligned to a DOM element: synchronous, deduplicated updates, optional versioned message batching, React adapter, framework-free core.",
   "keywords": [
     "electron",
