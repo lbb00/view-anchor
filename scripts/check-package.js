@@ -87,7 +87,7 @@ try {
     throw new Error(`The React package entry must load with React installed:\n${react.stderr}`)
   }
 
-  const typecheckFile = join(consumerDirectory, 'compat.mts')
+  const typecheckFile = join(packageDirectory, 'compat-check.ts')
   writeFileSync(
     typecheckFile,
     `

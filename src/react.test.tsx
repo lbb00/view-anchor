@@ -89,7 +89,7 @@ function Anchored(props: {
   const elRef = useRef<HTMLDivElement | null>(null)
   const rectRef = useRef(rect)
   // Sync the latest rect post-commit instead of writing the ref during render
-  // (react-hooks/refs). The stub is only read inside `setRef` when React hands
+  // (react/refs). The stub is only read inside `setRef` when React hands
   // us a *new* element, which always happens after commit, so the stub timing
   // is identical to the render-time write.
   useEffect(() => {
@@ -416,7 +416,7 @@ describe('useViewAnchor — remount with present transition', () => {
     // Host drives BOTH `mounted` and the `present` option from a single
     // `shown` flag, mirroring the production coupling (hidden ⟺ unmounted).
     // Both are passed as props and flipped via rerender inside `act` — never
-    // by reassigning an outer variable during render (react-hooks/globals).
+    // by reassigning an outer variable during render (react/globals).
     function Host(props: { shown: boolean }): React.JSX.Element {
       return (
         <Anchored
@@ -582,7 +582,7 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
     let ref!: ViewAnchorRef
 
     function Capture(): null {
-      // eslint-disable-next-line react-hooks/globals -- test-only callback ref capture
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
       ref = useViewAnchor({ present: true, publish })
       return null
     }
@@ -634,7 +634,7 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
     let ref!: ViewAnchorRef
 
     function Capture(props: { revision: number }): null {
-      // eslint-disable-next-line react-hooks/globals -- test-only callback ref capture
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
       ref = useViewAnchor({ present: true, publish, deps: [props.revision] })
       return null
     }
@@ -665,7 +665,7 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
     let ref!: ViewAnchorRef
 
     function Capture(): null {
-      // eslint-disable-next-line react-hooks/globals -- test-only callback ref capture
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
       ref = useViewAnchor({ present: true, publish })
       return null
     }
@@ -710,7 +710,7 @@ describe('usePlacementAnchor', () => {
     let ref!: ReturnType<typeof usePlacementAnchor>
 
     function Capture(props: { options: UsePlacementAnchorOptions }): null {
-      // eslint-disable-next-line react-hooks/globals -- test-only callback ref capture
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
       ref = usePlacementAnchor(props.options)
       return null
     }
@@ -759,7 +759,7 @@ describe('usePlacementAnchor', () => {
     let ref!: ReturnType<typeof usePlacementAnchor>
 
     function Capture(props: { options: UsePlacementAnchorOptions }): null {
-      // eslint-disable-next-line react-hooks/globals -- test-only callback ref capture
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
       ref = usePlacementAnchor(props.options)
       return null
     }
@@ -793,7 +793,7 @@ describe('usePlacementAnchor', () => {
     let ref!: ReturnType<typeof usePlacementAnchor>
 
     function Capture(props: { options: UsePlacementAnchorOptions }): null {
-      // eslint-disable-next-line react-hooks/globals -- test-only callback ref capture
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
       ref = usePlacementAnchor(props.options)
       return null
     }

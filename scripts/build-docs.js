@@ -1,7 +1,7 @@
 // Bundle the view-anchor core (src/view-anchor.ts) and inline it into the
 // standalone 3D demo (docs/index.html) between the marker comments.
 //
-// Why inline rather than `import './core.mjs'`: the demo is meant to open by
+// Why inline rather than `import './core.js'`: the demo is meant to open by
 // double-click (file://), where browsers block ES-module imports as cross-origin
 // (origin "null"). Inlining keeps the page self-contained while still using the
 // real built artifact — the block below is GENERATED from src, never hand-edited.

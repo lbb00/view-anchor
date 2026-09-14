@@ -56,17 +56,17 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && pnpm run build:docs",
-    "build:docs": "node scripts/build-docs.mjs",
+    "build:docs": "node scripts/build-docs.js",
     "check-types": "tsc --noEmit",
-    "lint": "oxlint . --deny-warnings",
+    "lint": "oxlint . --deny-warnings --report-unused-disable-directives",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test": "vitest run --reporter=default --reporter=json --outputFile.json=test-report.json --coverage.enabled --coverage.reporter=json-summary --coverage.reportsDirectory=coverage",
     "test:dev": "vitest",
     "test:coverage": "vitest run --coverage",
-    "benchmark": "node --expose-gc scripts/performance-report.mjs",
-    "benchmark:v8": "node --trace-opt --trace-deopt --trace-turbo-inlining --expose-gc scripts/performance-report.mjs",
-    "check-package": "node scripts/check-package.mjs",
+    "benchmark": "node --expose-gc scripts/performance-report.js",
+    "benchmark:v8": "node --trace-opt --trace-deopt --trace-turbo-inlining --expose-gc scripts/performance-report.js",
+    "check-package": "node scripts/check-package.js",
     "prepack": "pnpm run build"
   },
   "peerDependencies": {

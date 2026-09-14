@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { GEOMETRY_PROTOCOL_VERSION } from './protocol-types.js'
 import { createGeometryBatcher } from './protocol-publisher.js'
@@ -109,12 +108,11 @@ describe('createGeometryBatcher onError contract', () => {
 // Vitest's import.meta.url is not a plain file:// URL, so anchor on the
 // working directory the `test` script always runs from (repo root).
 const repoRoot = process.cwd()
+const rolldownHref = import.meta.resolve('rolldown')
 
 const CHILD_SCRIPT = `
-import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
-const require = createRequire(${JSON.stringify(join(repoRoot, 'package.json'))})
-const { rolldown } = await import(require.resolve('rolldown'))
+const { rolldown } = await import(${JSON.stringify(rolldownHref)})
 
 async function load(entry) {
   const bundle = await rolldown({ input: resolve(${JSON.stringify(repoRoot)}, entry) })
@@ -475,8 +473,9 @@ interface AuditResult {
 }
 
 function runAudit(): AuditResult {
-  const dir = mkdtempSync(join(tmpdir(), 'view-anchor-gc-'))
-  const scriptPath = join(dir, 'audit.mjs')
+  mkdirSync(join(repoRoot, '.tmp'), { recursive: true })
+  const dir = mkdtempSync(join(repoRoot, '.tmp', 'gc-'))
+  const scriptPath = join(dir, 'audit.js')
   writeFileSync(scriptPath, CHILD_SCRIPT)
   try {
     const stdout = execFileSync(process.execPath, ['--expose-gc', scriptPath], {

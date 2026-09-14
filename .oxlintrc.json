@@ -1,21 +1,24 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "react"],
+  "plugins": ["typescript", "react", "import"],
   "categories": {
     "correctness": "off"
   },
   "env": {
     "builtin": true,
-    "browser": true,
-    "serviceworker": true
+    "browser": true
   },
   "settings": {
     "react": {
       "version": "18"
     }
   },
-  "ignorePatterns": ["dist/**", "docs/**", "coverage/**"],
+  "ignorePatterns": ["dist/**", "docs/**", "coverage/**", ".tmp/**"],
   "rules": {
+    "import/extensions": [
+      "error",
+      { "mjs": "never", "cjs": "never", "mts": "never", "cts": "never" }
+    ],
     "constructor-super": "error",
     "for-direction": "error",
     "getter-return": "error",
@@ -141,13 +144,13 @@
   },
   "overrides": [
     {
-      "files": ["scripts/**/*.mjs"],
+      "files": ["scripts/**/*.js"],
       "env": {
         "node": true
       }
     },
     {
-      "files": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
+      "files": ["**/*.ts", "**/*.tsx"],
       "rules": {
         "constructor-super": "off",
         "getter-return": "off",

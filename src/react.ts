@@ -50,14 +50,11 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
   const handleRef = useRef<Handle | null>(null)
   const elementRef = useRef<HTMLElement | null>(null)
   const optionsRef = useRef(options)
-  // eslint-disable-next-line react-hooks/refs
   optionsRef.current = options
   const adapterRef = useRef(adapter)
-  // eslint-disable-next-line react-hooks/refs
   adapterRef.current = adapter
   const appliedRef = useRef(applied)
   const currentAppliedRef = useRef(applied)
-  // eslint-disable-next-line react-hooks/refs
   currentAppliedRef.current = applied
   // Options handed to the adapter on the last create/update call.
   // Tracks applied state across renders where the deps array reference changes.
@@ -116,7 +113,6 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
       return () => deferDetach(element)
     }
     return undefined
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- helpers only read stable refs
   }, [])
 
   useEffect(() => {
@@ -131,7 +127,7 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
       adapterRef.current.update(handle, optionsRef.current)
       lastAppliedOptionsRef.current = optionsRef.current
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, applied)
 
   useEffect(() => {
@@ -140,7 +136,6 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
       const element = elementRef.current
       if (element) deferDetach(element)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- helpers only read stable refs
   }, [])
 
   return ref
