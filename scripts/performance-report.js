@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { cpus } from 'node:os'
 import { join } from 'node:path'
@@ -119,7 +119,7 @@ async function exportSize(entry, name) {
 }
 
 function isolatedMemory(protocolPath, scenario) {
-  const worker = fileURLToPath(new URL('./performance-memory-worker.mjs', import.meta.url))
+  const worker = fileURLToPath(new URL('./performance-memory-worker.js', import.meta.url))
   const result = spawnSync(
     process.execPath,
     ['--expose-gc', worker, pathToFileURL(protocolPath).href, scenario, String(largeCount)],
@@ -179,7 +179,8 @@ async function runSample() {
   if (typeof globalThis.gc !== 'function') {
     throw new Error('Run with node --expose-gc so memory measurements are explicit')
   }
-  const temporary = mkdtempSync('/tmp/view-anchor-performance-')
+  mkdirSync(join(rootPath, '.tmp'), { recursive: true })
+  const temporary = mkdtempSync(join(rootPath, '.tmp', 'performance-'))
   try {
     return await runSampleIn(temporary)
   } finally {
@@ -188,8 +189,8 @@ async function runSample() {
 }
 
 async function runSampleIn(temporary) {
-  const protocolPath = join(temporary, 'protocol.mjs')
-  const corePath = join(temporary, 'core.mjs')
+  const protocolPath = join(temporary, 'protocol.js')
+  const corePath = join(temporary, 'core.js')
   await compile('src/protocol.ts', protocolPath)
   await compile('src/view-anchor.ts', corePath)
   const {

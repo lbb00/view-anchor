@@ -6,7 +6,6 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
-    globals: true,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary', 'html', 'json-summary'],
@@ -14,15 +13,8 @@ export default defineConfig({
       // Uncovered src files count toward the denominator — without an explicit
       // include, vitest only reports files loaded during the run, so a new
       // untested file would not lower the percentage.
-      include: ['src/**/*.{ts,tsx,js,jsx}'],
-      exclude: [
-        '**/*.test.{ts,tsx}',
-        '**/__test-stubs__/**',
-        'e2e/**',
-        'dist/**',
-        '**/*.config.*',
-        '**/*.d.ts',
-      ],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['**/*.test.{ts,tsx}', 'dist/**', '**/*.config.*', '**/*.d.ts'],
     },
   },
 })

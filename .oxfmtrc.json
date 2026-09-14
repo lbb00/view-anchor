@@ -5,5 +5,5 @@
   "semi": false,
   "trailingComma": "all",
   "sortPackageJson": false,
-  "ignorePatterns": ["dist/**", "docs/**", "coverage/**"]
+  "ignorePatterns": ["dist/**", "docs/**", "coverage/**", ".tmp/**"]
 }
