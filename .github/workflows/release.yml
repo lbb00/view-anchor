@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # This must match the Environment configured for view-anchor's npm trusted
+    # publisher, otherwise npm rejects the OIDC publish request.
+    environment: npm-release
+    # Keep manual dispatches on a feature branch from opening a release PR or
+    # publishing a package.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # npm Trusted Publishing currently requires npm >= 11.5.1. Node 24
+      # supplies a compatible npm CLI; retain its version in the workflow log.
+      - name: Check npm CLI version
+        run: npm --version
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          publish-script: pnpm release
