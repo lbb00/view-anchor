@@ -1,0 +1,49 @@
+# Source modules should stay compact; tests get room for realistic setup and fixtures.
+dimensions:
+  - id: 'source-file-length'
+    title: 'Source files over 600 lines'
+    direction: 'lower-is-better'
+    builtin: 'file-length'
+    options:
+      threshold: 600
+      include: ['src/**']
+      exclude: ['**/node_modules/**', '**/dist/**', '**/vendor/**']
+
+  - id: 'source-file-length-growth'
+    title: 'Long source files must not grow'
+    direction: 'lower-is-better'
+    gate: 'per-key-value'
+    builtin: 'file-length'
+    options:
+      threshold: 600
+      include: ['src/**']
+      exclude: ['**/node_modules/**', '**/dist/**', '**/vendor/**']
+
+  - id: 'test-file-length'
+    title: 'Test files over 1,000 lines'
+    direction: 'lower-is-better'
+    builtin: 'file-length'
+    options:
+      threshold: 1000
+      include: ['test/**']
+      exclude: ['**/node_modules/**', '**/dist/**', '**/vendor/**']
+
+  - id: 'test-file-length-growth'
+    title: 'Long test files must not grow'
+    direction: 'lower-is-better'
+    gate: 'per-key-value'
+    builtin: 'file-length'
+    options:
+      threshold: 1000
+      include: ['test/**']
+      exclude: ['**/node_modules/**', '**/dist/**', '**/vendor/**']
+
+  - id: 'todos'
+    title: 'TODO / FIXME markers in source and tests'
+    direction: 'lower-is-better'
+    gate: 'per-file-count'
+    builtin: 'pattern-count'
+    options:
+      pattern: 'TODO|FIXME'
+      include: ['src/**', 'test/**']
+      exclude: ['**/node_modules/**', '**/dist/**', '**/vendor/**']

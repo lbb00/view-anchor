@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createSizeAdvertiser } from './size-advertiser.js'
-import type { AdvertisedSize } from './types.js'
+import { createSizeAdvertiser } from '../src/size-advertiser.js'
+import type { AdvertisedSize } from '../src/types.js'
 
 // ── Extras: clipped/degenerate RO shapes, multi-instance isolation, and
 //    the new update() re-advertise behaviour ──────────────────────────────

@@ -7,7 +7,7 @@ import {
   type UsePlacementAnchorOptions,
   type UseViewAnchorOptions,
   type ViewAnchorRef,
-} from './react.js'
+} from '../src/react.js'
 
 // ── ResizeObserver stub ──────────────────────────────────────────────
 // The React adapter is a thin wrapper over `createViewAnchor`, so behaviour

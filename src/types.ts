@@ -36,6 +36,8 @@ export interface ViewAnchorOptions {
   present: boolean
   /** Receives the live rect, or zero bounds when detached. */
   publish: Publisher<Bounds>
+  /** Stops this anchor when aborted. An already-aborted signal starts no work. */
+  signal?: AbortSignal
 }
 
 export interface ViewAnchorHandle {
@@ -66,6 +68,8 @@ export interface SizeAdvertiserOptions {
   axis: AdvertisedAxis
   /** Receives each advertised size. */
   publish: Publisher<AdvertisedSize>
+  /** Stops this advertiser when aborted. An already-aborted signal starts no work. */
+  signal?: AbortSignal
 }
 
 export interface SizeAdvertiserHandle {

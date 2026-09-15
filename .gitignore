@@ -6,6 +6,7 @@ test-report*.json
 *.tsbuildinfo
 .DS_Store
 *.log
+pawl.snapshot.json
 
 # Local agent handoff notes: session ids, absolute paths, recent prompts.
 .claude/WORKLOG.md

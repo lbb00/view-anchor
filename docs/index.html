@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>view-anchor 3D demo: align anything outside the DOM to a DOM element</title>
-<meta name="description" content="view-anchor is a high-performance geometry bridge that keeps an anchored view — an Electron WebContentsView, a native webview, a cross-origin iframe — aligned to a DOM element. This interactive 3D demo runs the real core in your browser.">
+<title>view-anchor 3D Demo: Keep External Surfaces Aligned with DOM Elements</title>
+<meta name="description" content="Interactive 3D demo showing view-anchor tracking DOM elements live in the browser, with zero frame lag and no external dependencies.">
 <style>
   :root {
     --bg:               hsl(  0  0%   7%);
@@ -125,7 +125,7 @@
     background: linear-gradient(180deg, hsl(160 40% 20%), hsl(160 38% 13%));
     border: 1.5px solid var(--native-bd);
     box-shadow: 0 0 0 1px hsl(160 72% 60% / 0.25), inset 0 0 24px hsl(160 72% 50% / 0.12);
-    /* position/size snap each frame (like a real setBounds) — only the
+    /* position/size snap each frame — only the
        explode lift + collapse fade animate; otherwise tracking rubber-bands. */
     transition: transform 900ms cubic-bezier(0.6,0,0.2,1), box-shadow 900ms, opacity 300ms;
     overflow: hidden;
@@ -213,7 +213,7 @@
       <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D24-339933">
     </div>
     <h1>view-anchor: interactive 3D demo</h1>
-    <p class="tag-en">Align an <b style="color:var(--native-bd)">anchored view</b> — an Electron <code>WebContentsView</code>, a native webview, a cross-origin iframe — to a DOM element's geometry. Resize the splitter, toggle <code>present</code>, or explode the 3D scene below: the green anchored view is positioned by the real view-anchor core running in this page.</p>
+    <p class="tag-en">Align external surfaces (native views, canvases, iframes) to DOM elements in real time. Drag the splitter or toggle controls below: the green surface is positioned live by view-anchor.</p>
     <div class="actions">
       <a href="https://github.com/lbb00/view-anchor">GitHub</a>
       <a href="https://www.npmjs.com/package/view-anchor">npm</a>
@@ -253,7 +253,7 @@
           <input type="checkbox" id="present" checked>
           <span class="track"></span><span class="thumb"></span>
         </span>
-        <label for="present"><code>present</code></label>
+        <label for="present">Mount (<code>present</code>)</label>
       </div>
       <div class="ctl">
         <label for="split">Split</label>
@@ -264,7 +264,7 @@
           <input type="checkbox" id="explode" checked>
           <span class="track"></span><span class="thumb"></span>
         </span>
-        <label for="explode">Explode</label>
+        <label for="explode">3D Explode</label>
       </div>
       <div class="readout" id="readout"></div>
     </div>
@@ -282,7 +282,7 @@
       <a href="https://www.npmjs.com/package/view-anchor">npm · view-anchor</a>
       <span style="color:var(--text-3)">MIT licensed</span>
     </div>
-    <div class="hint">Drag <code>Split</code> to resize the placeholder, toggle <code>present</code> to collapse or restore, and toggle <code>Explode</code> for the 3D perspective. The green anchored view's bounds come directly from view-anchor's <code>publish</code> callback.</div>
+    <div class="hint">Drag <b>Split</b> to resize the placeholder, or toggle <b>3D Explode</b> to inspect the Z-space layering. The green overlay tracks the layout synchronously via the <code>publish</code> callback.</div>
   </footer>
 
 </div>
@@ -295,6 +295,16 @@
 /* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts by `pnpm build:docs`; do not edit */
 var __viewAnchorCore = (function(exports) {
 	Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+	//#region src/abort.ts
+	const NOOP = () => {};
+	/** Attach a one-shot abort listener and return a function that detaches it. */
+	function watchAbort(signal, dispose) {
+		if (!signal) return NOOP;
+		const onAbort = () => dispose();
+		signal.addEventListener("abort", onAbort, { once: true });
+		return () => signal.removeEventListener("abort", onAbort);
+	}
+	//#endregion
 	//#region src/view-anchor.ts
 	const ZERO = {
 		x: 0,
@@ -320,8 +330,8 @@ var __viewAnchorCore = (function(exports) {
 	* - `dispose()`: stops observing and prevents any further publishes.
 	*
 	* Synchronous publishing: measurement and publishing occur directly in the
-	* observer tick. Cross-process setBounds calls already have a compositor delay;
-	* adding requestAnimationFrame would add a second frame of visual lag during drag
+	* observer tick. Applying geometry outside the DOM may already be delayed;
+	* adding requestAnimationFrame would add another frame of visual lag during drag
 	* operations. High-frequency updates are deduplicated against the last accepted rect.
 	*/
 	function createViewAnchor(target, opts) {
@@ -387,7 +397,22 @@ var __viewAnchorCore = (function(exports) {
 				publishCandidate(ZERO);
 			}
 		};
-		apply();
+		let removeAbortListener = () => {};
+		const dispose = () => {
+			if (disposed) return;
+			disposed = true;
+			removeAbortListener();
+			removeAbortListener = () => {};
+			stopObserving();
+			targetRef = null;
+			publish = NOOP_PUBLISH;
+			lastPublished = null;
+		};
+		if (opts.signal?.aborted) dispose();
+		else {
+			removeAbortListener = watchAbort(opts.signal, dispose);
+			apply();
+		}
 		return {
 			update(next) {
 				if (disposed) return;
@@ -395,14 +420,7 @@ var __viewAnchorCore = (function(exports) {
 				present = next.present;
 				apply();
 			},
-			dispose() {
-				if (disposed) return;
-				disposed = true;
-				stopObserving();
-				targetRef = null;
-				publish = NOOP_PUBLISH;
-				lastPublished = null;
-			}
+			dispose
 		};
 	}
 	/**
@@ -656,7 +674,22 @@ var __viewAnchorCore = (function(exports) {
 				publishCandidate({ visible: false });
 			}
 		};
-		apply();
+		let removeAbortListener = () => {};
+		const dispose = () => {
+			if (disposed) return;
+			disposed = true;
+			removeAbortListener();
+			removeAbortListener = () => {};
+			stopObserving();
+			targetRef = null;
+			publish = NOOP_PUBLISH;
+			lastPublished = null;
+		};
+		if (opts.signal?.aborted) dispose();
+		else {
+			removeAbortListener = watchAbort(opts.signal, dispose);
+			apply();
+		}
 		return {
 			update(next) {
 				if (disposed) return;
@@ -671,14 +704,7 @@ var __viewAnchorCore = (function(exports) {
 				}
 				apply();
 			},
-			dispose() {
-				if (disposed) return;
-				disposed = true;
-				stopObserving();
-				targetRef = null;
-				publish = NOOP_PUBLISH;
-				lastPublished = null;
-			},
+			dispose,
 			pulse(durationMs) {
 				if (disposed || !followGeometry) return;
 				if (durationMs !== void 0 && durationMs > 0) {
@@ -723,7 +749,7 @@ var __viewAnchorCore = (function(exports) {
   }
 
   // The host-side publish — view-anchor hands it the measured rect. A real app
-  // would go IPC → WebContentsView.setBounds; here we place the view in the
+  // application code would use the bounds here; this demo places the view in the
   // deck's local coordinates.
   function publish(bounds) {
     if (bounds.width === 0 || bounds.height === 0) {

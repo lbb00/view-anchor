@@ -26,8 +26,8 @@
     .sans { font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
 
-    /* One 10s loop: the splitter is dragged left, the placeholder div widens,
-       and the anchored view one layer up follows the same rectangle. */
+    /* One 10s loop: the splitter is dragged left, the DOM placeholder widens,
+       and the external surface follows the same rectangle. */
     .drag { animation: drag 10s ease-in-out infinite; }
     .ph   { animation: ph   10s ease-in-out infinite; }
     .nv   { animation: nv   10s ease-in-out infinite; }
@@ -62,13 +62,13 @@
 
 <rect width="1200" height="540" fill="url(#bg)"/>
 
-<!-- The 3D scene. Everything below lives in the plane of the renderer window;
+<!-- The 3D scene. Everything below lives in the plane of the application DOM;
      the matrix is its axonometric projection. Lifting a point along Z is the
      plane offset d = (138.7, -344.8), so the connector pillars come out
      perfectly vertical after projection. -->
 <g transform="matrix(0.5133,-0.2221,0.2064,0.2996,60,341.3)">
 
-  <!-- bottom layer: the renderer window -->
+  <!-- bottom layer: the application DOM -->
   <g filter="url(#winShadow)">
     <rect x="0" y="0" width="840" height="520" rx="16" fill="#1b1d21" stroke="#5d6b84" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
   </g>
@@ -113,7 +113,7 @@
     <text class="mono" x="348" y="480" font-size="26" fill="#cdc2ff" fill-opacity="0.92">&lt;div ref={anchorRef} /&gt;</text>
   </g>
 
-  <!-- top layer: the anchored view, positioned from publish(bounds) -->
+  <!-- top layer: the external surface, positioned from publish(bounds) -->
   <g class="nv" filter="url(#nvShadow)">
     <rect x="462.7" y="-288.8" width="502" height="450" rx="12" fill="url(#nvg)" stroke="#47e1ae" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
   </g>

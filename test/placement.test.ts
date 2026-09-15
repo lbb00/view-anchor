@@ -24,13 +24,13 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 // compile error that vitest would skip.
 // ─────────────────────────────────────────────────────────────────────
 
-import type { Bounds } from './types.js'
+import type { Bounds } from '../src/types.js'
 
 // The explicit API is imported through this indirection so that a missing
 // export is observable as `undefined` at runtime (→ a failing assertion /
 // TypeError), not a static "module has no exported member" compile error that
 // would prevent the whole suite from running.
-import * as viewAnchorModule from './view-anchor.js'
+import * as viewAnchorModule from '../src/view-anchor.js'
 
 // The shape the explicit API must produce/consume. Mirrored locally (not
 // imported) so these tests describe the *target* contract independently of

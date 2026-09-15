@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { PlacementMessage, SizeMessage } from './protocol.js'
+import type { PlacementMessage, SizeMessage } from '../src/protocol.js'
 import {
   GEOMETRY_PROTOCOL_VERSION,
   createGeometrySequenceGuard,
   decodeGeometryWireValue,
-} from './protocol.js'
+} from '../src/protocol.js'
 
 const placement = (overrides: Record<string, unknown> = {}): PlacementMessage =>
   ({

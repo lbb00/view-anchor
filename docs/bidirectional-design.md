@@ -2,8 +2,8 @@
 
 view-anchor 支持双向几何同步：
 
-- **正向（`createViewAnchor`）**：宿主测量 DOM 占位元素的位置和尺寸，通过 `publish(bounds)` 发送给主进程或外部容器，更新原生视图（如 `WebContentsView.setBounds`）。
-- **反向（`createSizeAdvertiser`）**：下游视图内部测量自身内容尺寸，通过 `publish(size)` 通知宿主调整占位大小，宿主再通过正向更新视图位置。
+- **正向（`createViewAnchor`）**：测量 DOM 占位元素的位置和尺寸，通过 `publish(bounds)` 把 `{ x, y, width, height }` 交给应用，由应用更新外部画面。
+- **反向（`createSizeAdvertiser`）**：内容区域测量自身尺寸，通过 `publish(size)` 把 `{ axis, extent }` 交给应用，由应用调整占位元素大小。
 
 常见场景：嵌套在宿主中的工具栏或面板，其宽度由宿主布局决定，高度则由子视图自身的内容决定。
 
@@ -12,9 +12,9 @@ view-anchor 支持双向几何同步：
 两个方向在性能和交互上的要求不同，因此没有共用同一套调度逻辑：
 
 - **正向（`createViewAnchor`）采用同步发布。**
-  原生视图的 `setBounds` 需要跨进程通信，相比渲染进程本身的页面绘制通常已经有大约一帧的延迟。如果测量和发布再走一次 `requestAnimationFrame`，拖拽时就会产生两帧以上的视觉延迟，出现明显的边框脱节。因此正向在 `ResizeObserver` 和窗口 `resize` 回调中**同步测量并发布**，高频触发的防抖则依赖前后数值的比对（相同矩形直接跳过）。
+  外部画面的更新本身可能已有延迟；测量后再等一次 `requestAnimationFrame` 会增加拖拽时的跟随延迟。因此正向在 `ResizeObserver` 和窗口 `resize` 回调中**同步测量并调用 `publish(bounds)`**，相同矩形直接跳过。
 - **反向（`createSizeAdvertiser`）采用 RAF 调度（`createMeasureLoop`）。**
-  反向构成了一条跨进程的反馈环：下游上报尺寸 → 宿主调整占位大小 → 下游重新布局与测量 → 再次上报。在这个链路中，将上报频率限制在每帧至多一次（与屏幕刷新率对齐）能够有效避免高频震荡，同时提供平滑的缓冲。
+  反向构成一条反馈环：内容上报尺寸 → 应用调整占位大小 → 内容重新布局与测量 → 再次上报。在这个链路中，将上报频率限制在每帧至多一次（与屏幕刷新率对齐）能够有效避免高频震荡，同时提供平滑的缓冲。
 
 ## 2. 反向接口说明
 
@@ -29,6 +29,7 @@ export interface AdvertisedSize {
 export interface SizeAdvertiserOptions {
   axis: AdvertisedAxis            // 创建后固定，每个 advertiser 只负责一条轴
   publish: Publisher<AdvertisedSize> // 接收尺寸发布的回调
+  signal?: AbortSignal            // abort 后停止监听并取消已排队的帧
 }
 
 export interface SizeAdvertiserHandle {
@@ -51,9 +52,9 @@ export function createSizeAdvertiser(
 
 为了避免死循环，必须遵循单轴控制原则：
 
-- 一个 advertiser 只测量并上报它负责的那条轴；另一条轴由宿主通过 `setBounds` 单向传入，下游只读。
-- 典型案例：宿主决定宽度，下游决定高度。因为高度是内容流式排版的结果而不是输入，整个尺寸传递是一条单向有向无环图（DAG），更新可以在单步内收敛。
-- 如果下游的高度又反过来改变了下游的宽度（或测量了 `<body>`/`<html>`），就会形成跨进程的循环调整，导致界面抖动。
+- 一个 advertiser 只测量并上报它负责的那条轴；另一条轴由应用单向设置，内容区域只读。
+- 典型案例：宿主决定宽度，下游决定高度。因为高度是内容流式排版的结果而不是输入，整个尺寸传递构成一个有向无环图（DAG），更新在单步内即可收敛。
+- 如果内容的高度又反过来改变宽度（或测量了 `<body>`/`<html>`），就会形成循环调整，导致界面抖动。
 
 ## 4. 职责与信任边界
 
@@ -65,7 +66,7 @@ export function createSizeAdvertiser(
 | 过滤 NaN / Infinity | view-anchor | 丢弃异常无效数值 |
 | 负数归零 | view-anchor | 保证尺寸非负，反映真实测量结果 |
 | 视口限制（clamp） | 宿主 | 依据当前窗口可用空间对上报值做范围约束，防止异常大值 |
-| 发送方身份校验 | 宿主 | 在接收 IPC 或 postMessage 时验证 senderFrame、origin 或 token |
+| 来源身份校验 | 应用 | 在接收数据前验证调用方或通道是否可信 |
 | 轴白名单校验 | 宿主 | 检查 `axis` 是否与宿主预期的控制轴一致 |
 | 位置与层级锁定 | 宿主 | 下游不能擅自修改自身的坐标位置或 z-index |
 
@@ -81,32 +82,20 @@ export function createSizeAdvertiser(
 
 ```mermaid
 flowchart LR
-  subgraph DOWN["下游渲染进程（如工具栏页面）"]
-    C["内容容器<br/>高度由自身内容决定"]
-  end
-  subgraph HOST["宿主渲染进程"]
-    H["宿主消息处理器<br/>校验来源、clamp 数值"]
-    DIV["占位 div"]
-    VA["createViewAnchor"]
-  end
-  subgraph MAIN["宿主主进程"]
-    NV["WebContentsView / 原生视图"]
-  end
-
-  C -->|"① publish(size)"| H
-  H -->|"② clamp 后写入 style.height"| DIV
-  DIV -->|"ResizeObserver 观测"| VA
-  VA -->|"③ 测出新矩形，publish(bounds)"| NV
-  NV -->|"④ setBounds 后下游视口变化，内容重排"| C
+  C["内容容器\n高度由自身内容决定"] -->|"① publish(size)"| H["应用回调\n校验并限制数值"]
+  H -->|"② 写入 style.height"| DIV["占位元素"]
+  DIV -->|"ResizeObserver 观测"| VA["createViewAnchor"]
+  VA -->|"③ publish(bounds)"| A["应用回调"]
+  A -->|"④ 应用矩形"| S["外部画面"]
 ```
 
-1. **下游**：通过 `createSizeAdvertiser` 测量高度并通过 IPC 发给宿主。
-2. **宿主**：对收到的高度做合规性限制（例如限制在 `minHeight` 和 `maxHeight` 之间），并写入占位 div 的样式。
-3. **宿主**：占位 div 尺寸改变，`createViewAnchor` 的 `ResizeObserver` 触发，测量出新的绝对矩形并发给主进程。
-4. **宿主主进程**：调用 `setBounds` 更新原生视图位置与尺寸。
+1. **内容区域**：通过 `createSizeAdvertiser` 测量高度并调用 `publish(size)`。
+2. **应用**：限制收到的高度（例如在 `minHeight` 和 `maxHeight` 之间），然后写入占位元素的样式。
+3. **占位元素**：尺寸改变后，`createViewAnchor` 的 `ResizeObserver` 会测量新的绝对矩形并调用 `publish(bounds)`。
+4. **应用**：把矩形用于定位外部画面。
 
-## 6. 与 Electron preferred-size 的关系
+## 6. 何时需要反向尺寸上报
 
-在纯 Electron 环境下，也可以使用 `enablePreferredSizeMode` 和 `preferred-size-changed` 事件由 Electron 主进程自动获取网页期望大小。
+只有外部画面的内容尺寸需要反过来改变宿主布局时，才需要 `createSizeAdvertiser`。如果应用已经能直接知道或设置这个尺寸，不需要引入反向反馈链路。
 
-view-anchor 的反向方案是平台无关的实现，适用于跨域 iframe、第三方 webview 或需要针对特定内部 DOM 节点测量尺寸的场景。两者并不冲突，可以根据具体的宿主架构按需选择。
+反向方案适用于需要测量特定内部 DOM 节点的场景。保持“一个方向只控制一个轴”，并在应用侧限制接收值，能避免尺寸互相驱动导致的抖动。
