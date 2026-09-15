@@ -181,6 +181,8 @@ The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 Issues and pull requests are welcome. Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` prints the data used to update the performance report.
 
+Changes that affect a published version must include a Changeset. Run `pnpm changeset`, select the version bump, and describe the user-visible change. Merging it into `main` opens a version PR; merging that PR publishes the package.
+
 ## License
 
 [MIT](./LICENSE) © lbb00
