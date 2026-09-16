@@ -1,6 +1,6 @@
 {
   "name": "view-anchor",
-  "version": "0.2.2-alpha.0",
+  "version": "0.2.2",
   "description": "High-performance geometry bridge that measures a DOM element and synchronously gives application code its current bounds: deduplicated updates, optional versioned message batching, React adapter, framework-free core.",
   "keywords": [
     "dom",
