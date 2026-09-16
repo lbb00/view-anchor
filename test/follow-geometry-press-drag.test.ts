@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createPlacementAnchor } from './view-anchor.js'
-import type { Placement } from './types.js'
+import { createPlacementAnchor } from '../src/view-anchor.js'
+import type { Placement } from '../src/types.js'
 
 // ── press-pause-drag: the windowed RAF geometry sentinel must NOT close
 //    while the pointer is still held down ───────────────────────────────

@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { GEOMETRY_PROTOCOL_VERSION } from './protocol-types.js'
-import { createGeometryBatcher } from './protocol-publisher.js'
+import { GEOMETRY_PROTOCOL_VERSION } from '../src/protocol-types.js'
+import { createGeometryBatcher } from '../src/protocol-publisher.js'
 import type {
   GeometryBatcher,
   GeometryBatchSend,
   GeometryBatcherOptions,
-} from './protocol-publisher.js'
+} from '../src/protocol-publisher.js'
 
 // ── onError contract during a reentrant dispose() ─────────────────────────
 //

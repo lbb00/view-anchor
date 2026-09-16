@@ -1,35 +1,32 @@
 # view-anchor
 
-让宿主外部的视图（例如 Electron 的 `WebContentsView`）实时对齐某个 DOM 元素的屏幕位置。核心逻辑通过 `getBoundingClientRect()` 测量目标元素，把矩形数据交给注入的 `publish` 回调（通常由调用方转发 IPC 到 `setBounds`），并在元素移动或缩放时同步更新。
+将外部画面实时对齐到指定的 DOM 元素。核心逻辑通过 `getBoundingClientRect()` 测量目标元素，并把矩形数据交给 `publish` 回调；应用代码决定如何使用这个矩形。
 
-核心不依赖 React、Electron 或特定的布局引擎；React 相关的逻辑均隔离在 `view-anchor/react` 适配层中。
+核心不依赖 React、特定宿主或布局引擎；React 相关的逻辑均隔离在 `view-anchor/react` 适配层中。
 
-> 🎮 [3D 交互演示](https://lbb00.github.io/view-anchor/)：页面里跑的是真实核心代码。拖动分栏、切换面板显示，看原生视图实时跟随。源码见 [index.html](./index.html)。
+> **在线演示**：[3D 交互演示](https://lbb00.github.io/view-anchor/) 运行真实核心代码。拖动分栏、切换面板显示，看外部视图实时跟随。源码见 [index.html](./index.html)。
 
 ## 运行机制
 
 ```mermaid
 flowchart LR
-  subgraph R["渲染进程 · WebContents"]
-    DIV["占位 div<br/>（CSS 布局，自身不渲染）"]
-  end
-  subgraph M["主进程"]
-    WCV["WebContentsView<br/>（原生图层，覆盖在网页之上）"]
-  end
-  DIV -->|"getBoundingClientRect()"| VA["view-anchor"]
-  VA -->|"publish(bounds)<br/>IPC → setBounds"| WCV
+  DIV["占位元素\n参与 DOM 布局"] -->|"getBoundingClientRect()"| VA["view-anchor"]
+  VA -->|"publish(bounds)"| A["应用提供的回调"]
+  A -->|"应用矩形"| S["外部画面"]
 ```
 
-`WebContentsView` 运行在主进程，位置由主进程的 `setBounds` 设置；页面布局则由渲染进程通过 CSS 计算。两者不在同一个进程中，view-anchor 作为桥梁连接它们：占位 div 参与 DOM 布局，外部视图悬浮在上方，由 view-anchor 维持对齐。`publish` 是外部注入的回调，核心模块本身完全不感知 Electron。
+占位元素参与 DOM 布局，外部画面由应用代码定位。`view-anchor` 只负责测量和调用 `publish(bounds)`；它不创建外部画面，也不决定矩形通过什么方式到达那里。
 
 ## createViewAnchor(target, opts)
 
-命令式核心接口，将原生视图绑定到目标元素，返回 `{ update, dispose }`。
+命令式核心接口，将外部画面绑定到目标元素，返回 `{ update, dispose }`。
 
 ```ts
 const handle = createViewAnchor(target, {
-  present: true,                 // 是否显示原生视图
-  publish: (bounds) => { ... },  // 接收最新矩形，转发给 setBounds
+  present: true,
+  publish(bounds) {
+    applyBounds(bounds)
+  },
 })
 ```
 
@@ -38,18 +35,18 @@ const handle = createViewAnchor(target, {
 | `present: true` | 立即发布测量矩形，之后每次 `ResizeObserver` 触发或窗口 `resize` 时同步重发。 |
 | `present: false` | 停止观察，发布一次 `{ x: 0, y: 0, width: 0, height: 0 }`。 |
 | `update(opts)` | 应用新选项，重置去重缓存并立即重新发布一次。 |
-| `dispose()` | 停止所有监听并释放资源，此后不再发布。 |
+| `dispose()` / `AbortController.abort()` | 停止所有监听并释放资源，此后不再发布。 |
 
 测量结果使用 `Math.round` 取整。`width` 和 `height` 会限制为 `>= 0`（0 代表收起），但 `x` 和 `y` 允许为负数。当元素滚动出视口上边缘或左边缘时，原点自然会是负值，保留负值可以让视图正常跟随元素滚出屏幕。
 
-**为什么同步发布而不走 RAF：** 原生 overlay 处于另一个进程，IPC 传递到 `setBounds` 相比渲染进程本身的绘制已经有一帧左右的合成延迟。如果测量和发布再进一次 RAF，拖拽时就会叠加第二帧延迟，造成明显的跟随拖尾。在 observer 回调中直接同步测量和发布可以省掉这层额外延迟。同帧多次触发的防抖则交由同值去重处理：只有矩形数值与上一次不同时才触发 `publish`。调用 `update` 时会先清除去重基线，确保外部状态变化（如缩放系数变化）时即使几何数据未变也能重新发布。
+**为什么同步发布而不走 RAF：** 外部画面的更新本身可能已经有延迟。若测量后再等一帧，拖拽时会多出一帧跟随延迟。在 observer 回调中直接测量并调用 `publish` 可以避免这一步等待。同帧多次触发时，只要 4 个矩形数值有一项发生变化便会调用 `publish`，与上一帧完全一致则跳过。调用 `update` 会清除去重基线，因此即使矩形不变，也能把新的应用状态重新交给回调。
 
-调用 `dispose()` 或更新为 `present: false` 后，内部状态会立即置为停用，后续任何异步触发都会直接返回，避免过期数据覆盖新状态。
+调用 `dispose()`、`AbortController.abort()` 或更新为 `present: false` 后，内部状态会立即置为停用，后续任何异步触发都会直接返回，避免过期数据覆盖新状态。
 
 ## 收起与零矩形
 
-- **`present`**：标识原生视图当前是否需要显示。
-- **`{ x: 0, y: 0, width: 0, height: 0 }`（零矩形）**：收起信号。宿主可以将零面积理解为“从窗口中移出视图，但保留其 `WebContents` 实例”，实现秒开复用而不是反复销毁重建。
+- **`present`**：标识外部画面当前是否需要显示。
+- **`{ x: 0, y: 0, width: 0, height: 0 }`（零矩形）**：收起信号。应用可以把它解释为隐藏、移除，或仅保留最后一个状态。
 - **dispose 行为**：`dispose()` 只停止监听，不补发零矩形。如果需要在元素移除时通知宿主收起视图，应当在 dispose 之前调用 `update({ present: false, ... })`，React 适配层已自动处理了该生命周期。
 
 ## 显式可见性（createPlacementAnchor）
@@ -106,11 +103,14 @@ React 18 在卸载时会传入 `ref(null)`，React 19 支持 ref 清理函数。
 
 | 文件 | 用途 |
 |---|---|
-| `src/view-anchor.ts` | 正向命令式核心：`createViewAnchor`、`createPlacementAnchor`、`measurePlacement`。不含 React 和 Electron 依赖。 |
+| `src/view-anchor.ts` | 正向命令式核心：`createViewAnchor`、`createPlacementAnchor`、`measurePlacement`。不含 React 或宿主依赖。 |
 | `src/react.ts` | React 适配层：`useViewAnchor` 与 `usePlacementAnchor`。 |
 | `src/size-advertiser.ts` | 反向核心：`createSizeAdvertiser`。 |
 | `src/measure-loop.ts` | 反向专用的 RAF 调度与去重循环（内部实现，不对外导出）。 |
 | `src/types.ts` | 类型定义（`Bounds`、`Placement`、各模块配置与句柄）。 |
-| `src/index.ts` | 核心入口，默认不引入 React。 |
+| `src/abort.ts` | 内部实现：标准 `AbortSignal` 监听与注销辅助。 |
+| `src/index.ts` | 根入口，导出核心几何方法并兼容性重导出 `useViewAnchor`。 |
+
+消息协议模块（`src/protocol.ts`、`src/protocol-publisher.ts` 等）详见 [通信协议设计文档](./protocol.md)。
 
 核心运行时仅依赖标准 Web API（`ResizeObserver`、`getBoundingClientRect`、`addEventListener`）；`requestAnimationFrame` 仅在反向模块与可选的 `followGeometry` 中按需使用。

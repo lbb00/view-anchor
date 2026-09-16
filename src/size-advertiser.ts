@@ -4,6 +4,7 @@ import type {
   SizeAdvertiserOptions,
   SizeAdvertiserHandle,
 } from './types.js'
+import { watchAbort } from './abort.js'
 import { createMeasureLoop } from './measure-loop.js'
 
 // Replaces a disposed instance's publish callback so a retained handle does
@@ -68,9 +69,30 @@ export function createSizeAdvertiser(
     )
   }
 
-  loop.setActive(true)
-  observer = new ResizeObserver(onResize)
-  observer.observe(target)
+  let removeAbortListener = (): void => {}
+
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    removeAbortListener()
+    removeAbortListener = (): void => {}
+    loop.cancel()
+    if (observer) {
+      observer.disconnect()
+      observer = null
+    }
+    loop.dispose()
+    publish = NOOP_PUBLISH
+    latest = null
+  }
+
+  if (opts.signal?.aborted) dispose()
+  else {
+    removeAbortListener = watchAbort(opts.signal, dispose)
+    loop.setActive(true)
+    observer = new ResizeObserver(onResize)
+    observer.observe(target)
+  }
 
   return {
     update(nextPublish: Publisher<AdvertisedSize>): void {
@@ -81,17 +103,6 @@ export function createSizeAdvertiser(
       const cur = produce()
       if (cur !== null) loop.emitNow(cur)
     },
-    dispose(): void {
-      if (disposed) return
-      disposed = true
-      loop.cancel()
-      if (observer) {
-        observer.disconnect()
-        observer = null
-      }
-      loop.dispose()
-      publish = NOOP_PUBLISH
-      latest = null
-    },
+    dispose,
   }
 }

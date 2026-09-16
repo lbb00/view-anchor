@@ -1,6 +1,6 @@
 # 通信协议
 
-`view-anchor` 核心模块只负责测量并同步调用 `publish`。如果需要在进程或 iframe 边界上传输几何数据，可以使用可选的 `view-anchor/protocol` 模块。它提供带版本的消息结构、输入校验、消息防乱序和微任务批处理，不绑定具体的传输通道。
+`view-anchor` 核心模块只负责测量并同步调用 `publish`。如果应用要把几何数据交给异步或不完全可信的通道，可以使用可选的 `view-anchor/protocol` 模块。它提供带版本的消息结构、输入校验、消息防乱序和微任务批处理，不绑定具体的传递方式。
 
 一条消息从锚点走到宿主要经过的环节：
 
@@ -16,12 +16,12 @@ sequenceDiagram
   A->>P: publish(placement)
   P->>B: 带 anchorId、generation、seq 的消息
   Note over B: 同一微任务内合并，<br/>每个 anchorId 的 placement 和 size<br/>各自只留最新一条
-  B->>D: IPC / postMessage
+  B->>D: 应用传递原始数据
   D->>D: 校验版本、类型、整数范围、批次上限
   alt 校验不通过
     D-->>H: 返回 ok: false，不抛异常
   else 校验通过
-    Note over D,G: 宿主先验证发送方身份<br/>senderFrame / origin / token
+    Note over D,G: 接收方先验证来源身份
     D->>G: 逐条交给 guard
     alt generation 更旧，或同类型 seq 不大于已见最大值
       G-->>H: 丢弃
@@ -42,7 +42,7 @@ sequenceDiagram
 - `seq`：同一 publisher 内单调递增的序列号。
 - `placement` 或 `size`：具体的位置或尺寸数据。
 
-`generation` 作用于同一个 `anchorId`：一旦接收到新一代的消息，所有该锚点的旧代消息都会被直接丢弃。`generation` 与 `seq` 只负责保证消息顺序，不作为鉴权凭据。接收端依然应当在分发前验证发送方身份（如校验 `senderFrame`、域名或访问令牌）。
+`generation` 作用于同一个 `anchorId`：一旦接收到新一代的消息，所有该锚点的旧代消息都会被直接丢弃。`generation` 与 `seq` 只负责保证消息顺序，不作为鉴权凭据。接收端仍应在分发前验证来源身份。
 
 ## 发送端
 
@@ -53,7 +53,7 @@ import {
 } from 'view-anchor/protocol'
 
 const batcher = createGeometryBatcher(
-  (batch) => ipc.send('geometry', batch),
+  sendGeometryBatch,
   { onError: (err) => console.error(err) },
 )
 
@@ -88,7 +88,7 @@ if (result.ok) {
 
   for (const message of messages) {
     if (
-      isAuthorized(event.senderFrame, message.anchorId) &&
+      isAuthorized(message.anchorId) &&
       guard.accept(message)
     ) {
       applyGeometry(message)
@@ -105,4 +105,4 @@ if (result.ok) {
 - 返回 `true` 或 `void`：表示数据已成功接收或已加入发送队列。
 - 返回 `false`：表示当前未接收。核心会在下一次测量触发时重新尝试该值。
 
-如果底层传输是异步的（例如异步 IPC 或网络请求），应当先在同步回调中将消息放入本地发送队列并返回 `true`，后续的重试由发送队列自行管理。
+如果底层传递是异步的，应当先在同步回调中将消息放入本地队列并返回 `true`，后续的重试由发送队列自行管理。

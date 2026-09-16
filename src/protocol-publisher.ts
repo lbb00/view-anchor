@@ -1,4 +1,5 @@
 import type { AdvertisedSize, Placement, Publisher } from './types.js'
+import { watchAbort } from './abort.js'
 import {
   GEOMETRY_PROTOCOL_VERSION,
   type GeometryAddress,
@@ -14,6 +15,8 @@ export type GeometryBatchSend = Publisher<GeometryBatch>
 export interface GeometryBatcherOptions {
   /** Observes every batch-delivery error, including explicit flushes; it must not throw. */
   onError?: (error: unknown) => void
+  /** Stops this batcher when aborted. An already-aborted signal starts no work. */
+  signal?: AbortSignal
 }
 
 export interface GeometryBatcher {
@@ -85,8 +88,8 @@ const NOOP_SEND: GeometryBatchSend = () => false
 
 /**
  * Coalesces same-task messages without adding a rendering-frame delay. It owns
- * no authorization policy: callers must associate addresses with trusted IPC
- * senders before accepting a delivered batch.
+ * no authorization policy: callers must associate addresses with trusted
+ * sources before accepting a delivered batch.
  */
 export function createGeometryBatcher(
   send: GeometryBatchSend,
@@ -107,6 +110,7 @@ export function createGeometryBatcher(
   let disposed = false
   let scheduled = false
   let flushing = false
+  let removeAbortListener = (): void => {}
 
   // `activeOptions` lets a caller keep reporting to the options object that
   // was live when its flush() call started, even if a reentrant dispose()
@@ -192,6 +196,25 @@ export function createGeometryBatcher(
     })
   }
 
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    removeAbortListener()
+    removeAbortListener = (): void => {}
+    anchors.clear()
+    pendingAnchors.clear()
+    // Callers may still mutate the original options object after
+    // construction (e.g. reassigning onError); flush() captures its own
+    // reference before send() runs, so an in-flight error report keeps
+    // reading that object even though dispose() drops the instance's
+    // long-lived reference here.
+    options = {}
+    send = NOOP_SEND
+  }
+
+  if (options.signal?.aborted) dispose()
+  else removeAbortListener = watchAbort(options.signal, dispose)
+
   return {
     publish(message) {
       if (disposed) return false
@@ -238,17 +261,6 @@ export function createGeometryBatcher(
       if (state !== undefined) pendingAnchors.delete(state)
       anchors.delete(anchorId)
     },
-    dispose() {
-      disposed = true
-      anchors.clear()
-      pendingAnchors.clear()
-      // Callers may still mutate the original options object after
-      // construction (e.g. reassigning onError); flush() captures its own
-      // reference before send() runs, so an in-flight error report keeps
-      // reading that object even though dispose() drops the instance's
-      // long-lived reference here.
-      options = {}
-      send = NOOP_SEND
-    },
+    dispose,
   }
 }

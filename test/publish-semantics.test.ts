@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createSizeAdvertiser } from './size-advertiser.js'
-import { createPlacementAnchor, createViewAnchor } from './view-anchor.js'
-import type { AdvertisedSize, Bounds, Placement, Publisher } from './types.js'
+import { createSizeAdvertiser } from '../src/size-advertiser.js'
+import { createPlacementAnchor, createViewAnchor } from '../src/view-anchor.js'
+import type { AdvertisedSize, Bounds, Placement, Publisher } from '../src/types.js'
 
 class FakeResizeObserver {
   static instances: FakeResizeObserver[] = []

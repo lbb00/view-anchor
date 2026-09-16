@@ -3,8 +3,8 @@ import {
   createGeometryBatcher,
   createPlacementMessagePublisher,
   createSizeMessagePublisher,
-} from './protocol-publisher.js'
-import type { GeometryBatch, GeometryMessage } from './protocol.js'
+} from '../src/protocol-publisher.js'
+import type { GeometryBatch, GeometryMessage } from '../src/protocol.js'
 
 const address = { anchorId: 'editor', generation: 7 }
 

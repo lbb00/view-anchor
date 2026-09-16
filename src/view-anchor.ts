@@ -1,4 +1,5 @@
 import type { Bounds, Placement, Publisher, ViewAnchorOptions, ViewAnchorHandle } from './types.js'
+import { watchAbort } from './abort.js'
 
 const ZERO: Bounds = { x: 0, y: 0, width: 0, height: 0 }
 
@@ -27,8 +28,8 @@ const clampRect = (r: { x: number; y: number; width: number; height: number }): 
  * - `dispose()`: stops observing and prevents any further publishes.
  *
  * Synchronous publishing: measurement and publishing occur directly in the
- * observer tick. Cross-process setBounds calls already have a compositor delay;
- * adding requestAnimationFrame would add a second frame of visual lag during drag
+ * observer tick. Applying geometry outside the DOM may already be delayed;
+ * adding requestAnimationFrame would add another frame of visual lag during drag
  * operations. High-frequency updates are deduplicated against the last accepted rect.
  */
 export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): ViewAnchorHandle {
@@ -46,7 +47,7 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
 
   const measure = (): Bounds | null => {
     const r = targetRef!.getBoundingClientRect()
-    // Drop ticks with non-finite values (NaN / Infinity cannot be sent over IPC).
+    // Drop ticks with non-finite values (NaN / Infinity are not usable geometry).
     if (
       !Number.isFinite(r.left) ||
       !Number.isFinite(r.top) ||
@@ -115,7 +116,24 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
     }
   }
 
-  apply()
+  let removeAbortListener = (): void => {}
+
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    removeAbortListener()
+    removeAbortListener = (): void => {}
+    stopObserving()
+    targetRef = null
+    publish = NOOP_PUBLISH
+    lastPublished = null
+  }
+
+  if (opts.signal?.aborted) dispose()
+  else {
+    removeAbortListener = watchAbort(opts.signal, dispose)
+    apply()
+  }
 
   return {
     update(next: ViewAnchorOptions): void {
@@ -124,14 +142,7 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
       present = next.present
       apply()
     },
-    dispose(): void {
-      if (disposed) return
-      disposed = true
-      stopObserving()
-      targetRef = null
-      publish = NOOP_PUBLISH
-      lastPublished = null
-    },
+    dispose,
   }
 }
 
@@ -145,6 +156,8 @@ export interface PlacementAnchorOptions {
   visible: boolean
   /** Receives each explicit Placement. */
   publish: Publisher<Placement>
+  /** Stops this anchor when aborted. An already-aborted signal starts no work. */
+  signal?: AbortSignal
   /**
    * When true, targets with zero area (such as display: none or unmounted elements)
    * publish { visible: false } instead of { visible: true, bounds: 0x0 }, and an
@@ -485,7 +498,24 @@ export function createPlacementAnchor(
     }
   }
 
-  apply()
+  let removeAbortListener = (): void => {}
+
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    removeAbortListener()
+    removeAbortListener = (): void => {}
+    stopObserving()
+    targetRef = null
+    publish = NOOP_PUBLISH
+    lastPublished = null
+  }
+
+  if (opts.signal?.aborted) dispose()
+  else {
+    removeAbortListener = watchAbort(opts.signal, dispose)
+    apply()
+  }
 
   return {
     update(next: PlacementAnchorOptions): void {
@@ -503,14 +533,7 @@ export function createPlacementAnchor(
       }
       apply()
     },
-    dispose(): void {
-      if (disposed) return
-      disposed = true
-      stopObserving()
-      targetRef = null
-      publish = NOOP_PUBLISH
-      lastPublished = null
-    },
+    dispose,
     pulse(durationMs?: number): void {
       if (disposed || !followGeometry) return
       if (durationMs !== undefined && durationMs > 0) {

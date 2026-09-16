@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createViewAnchor, createPlacementAnchor } from './view-anchor.js'
-import type { Bounds, Placement, ViewAnchorOptions } from './types.js'
+import { createViewAnchor, createPlacementAnchor } from '../src/view-anchor.js'
+import type { Bounds, Placement, ViewAnchorOptions } from '../src/types.js'
 
 // ── ResizeObserver / RAF stubs ───────────────────────────────────────
 //
@@ -987,7 +987,7 @@ describe('createPlacementAnchor — scroll + windowed RAF geometry sentinel (opt
   // B-close: after the pointer is RELEASED, N=2 consecutive UNCHANGED frames
   //   cancel the rAF (steady = stop) — no further frame scheduled. A steady run
   //   while the pointer is still HELD is a mid-drag pause and must NOT close
-  //   (see follow-geometry-press-drag.fix.test.ts); close is gated on pointerup,
+  //   (see follow-geometry-press-drag.test.ts); close is gated on pointerup,
   //   so this test releases before going steady.
   it('B-close) pointerup then N=2 consecutive unchanged frames → sentinel stops (cancelAnimationFrame / no further frame scheduled)', () => {
     const publish = vi.fn<(p: Placement) => void>()

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createPlacementAnchor } from './view-anchor.js'
-import type { Placement } from './types.js'
+import { createPlacementAnchor } from '../src/view-anchor.js'
+import type { Placement } from '../src/types.js'
 
 // Locks the correct behaviour of the followGeometry sentinel when a
 // guardDisplayNone anchor's slot momentarily measures 0×0 during a

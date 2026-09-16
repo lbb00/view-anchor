@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/lbb00/view-anchor/main/assets/banner.svg" alt="view-anchor — keep anything outside the DOM aligned to a DOM element" width="820">
 </p>
 
-> A high-performance geometry bridge that keeps anything living outside the DOM aligned to a DOM element: an Electron `WebContentsView`, a native webview in another desktop shell, a cross-origin iframe, or any surface you position from a rectangle. Every move and resize is published synchronously with no duplicate frames.
+> Keep an external surface aligned to a DOM element. `view-anchor` measures the element and synchronously gives your code the current geometry whenever it changes.
 
 [![npm version](https://img.shields.io/npm/v/view-anchor)](https://www.npmjs.com/package/view-anchor)
 [![npm downloads](https://img.shields.io/npm/dm/view-anchor)](https://www.npmjs.com/package/view-anchor)
@@ -15,25 +15,35 @@
 
 ## The problem
 
-Some things you want to place inside your layout are not DOM nodes. An Electron `WebContentsView` is positioned by the main process. A native webview in another desktop shell is positioned by host code. The document inside a cross-origin iframe only knows what you tell it over `postMessage`. Your layout, whether it is flexbox, dockview, or react-resizable-panels, only moves DOM nodes and has no idea that something else is supposed to sit exactly on top of one of them.
+Some surfaces are positioned by application code rather than by CSS. They may be a canvas, a video overlay, an embedded document, or any other thing you can position from a rectangle. Your layout moves DOM elements, but it cannot move that external surface by itself.
 
-`view-anchor` closes that gap. You point it at a placeholder element. It measures the element and, every time the element moves or resizes, hands the new rectangle to your `publish` callback. What happens next is up to you: `ipcRenderer.send` plus `view.setBounds` in Electron, `postMessage` to an iframe, or a direct call into whatever positions the surface.
+Point `view-anchor` at a placeholder element. It measures the element on creation, on `ResizeObserver` notifications, and on window `resize`, then calls your `publish` function. Your function applies, stores, or sends that value using the mechanism your application already has.
 
-The core has no dependency on Electron, a browser shell, React, or any layout library. It only uses `ResizeObserver`, `requestAnimationFrame`, and `getBoundingClientRect`. React support lives in a separate `view-anchor/react` entry.
+The core has no dependency on a host runtime, React, or a layout library. It only uses `ResizeObserver`, `requestAnimationFrame`, and `getBoundingClientRect`. React support lives in a separate `view-anchor/react` entry.
+
+## What `publish` receives
+
+`publish` is not a built-in transport. It is a synchronous function that the library calls with one of these plain values:
+
+- `createViewAnchor` calls `publish(bounds)`, where `bounds` is `{ x, y, width, height }` in CSS pixels from `getBoundingClientRect()`. When `present` becomes `false`, it calls `publish({ x: 0, y: 0, width: 0, height: 0 })` once and stops observing.
+- `createPlacementAnchor` calls `publish({ visible: true, bounds })` while shown, or `publish({ visible: false })` while hidden. Use it when a visible zero-sized element differs from a hidden one.
+- `createSizeAdvertiser` calls `publish({ axis, extent })`, where `axis` is `block` (height) or `inline` (width), and `extent` is the rounded non-negative content size in CSS pixels.
+
+Return `false` only when the value was not accepted; a later measurement may retry it. Return `true` or nothing after accepting or queueing it.
 
 ## Built for the hot path
 
 Geometry updates fire on every resize and, when following a drag, on every animation frame. The library keeps that work predictable:
 
 - **Synchronous delivery.** Measurement and publish happen inside the same `ResizeObserver` callback. No timers, no extra frame of lag.
-- **Dedupe before allocate.** A rectangle identical to the last accepted one is rejected by comparing four numbers, before any object is created.
+- **Dedupe outgoing updates.** A rectangle identical to the last accepted one is not passed to `publish` again.
 - **Frame following only when needed.** `followGeometry` polls `requestAnimationFrame` during a scroll burst, a splitter drag, or an explicit `pulse()`, then closes itself once the rectangle settles. Idle cost is zero, and hidden or invalid targets are capped at 30 frames.
 - **O(1) generation changes.** In the protocol layer, moving an anchor to a new generation or clearing it does not touch other anchors.
 - **Latest-wins batching.** Messages queued in the same task are merged in a microtask. The newest placement and size for each anchor are sent separately.
 - **Release on disposal.** Disposed handles stop observing and release their target and callback references, even when the caller keeps the handle.
 - **Compact, tree-shakeable core.** Functions are separate exports with `sideEffects: false`; the complete core export is under 3 KB gzipped.
 
-The [performance report](./docs/performance-report.md) contains the reproducible measurements and their environment. They are useful for comparing changes on the same machine, not for predicting DOM layout, Electron IPC, structured clone, or your app's workload.
+The [performance report](./docs/performance-report.md) contains the reproducible measurements and their environment. They are useful for comparing changes on the same machine, not for predicting browser layout, serialization, delivery, or your app's workload.
 
 ## Installation
 
@@ -52,16 +62,31 @@ React is an optional peer dependency. Import the hooks from `view-anchor/react`.
 ```ts
 import { createViewAnchor } from 'view-anchor'
 
+const publish = (bounds) => {
+  applyBounds(bounds)
+}
+
 const handle = createViewAnchor(target, {
-  present: true,                 // mount the native view
-  publish: (bounds) => { ... },  // receive live rectangles; wire IPC → setBounds
+  present: true,
+  publish,
 })
 
-handle.update({ present, publish }) // apply new options and publish right away
-handle.dispose()                    // stop observing; never publishes again
+handle.update({ present: true, publish }) // apply new options and publish right away
+handle.dispose() // stop observing; never publishes again
 ```
 
-Set `present: false` to collapse the view. The core publishes a zero rectangle and stops observing. The host can detach the subview while keeping the `WebContents` alive, so re-showing it later is instant.
+Set `present: false` to collapse the surface. The core publishes a zero rectangle and stops observing. Your `publish` function decides whether that removes, hides, or retains the external surface.
+
+For ancestor scroll, transforms, or other position-only changes, use `createPlacementAnchor` with `followScroll` or `followGeometry` as needed.
+
+`createViewAnchor`, `createPlacementAnchor`, `createSizeAdvertiser`, and `createGeometryBatcher` accept `signal`. Aborting it is equivalent to `dispose()`; an already-aborted signal does not measure, publish, or install listeners.
+
+```ts
+const controller = new AbortController()
+const handle = createViewAnchor(target, { present: true, publish, signal: controller.signal })
+
+controller.abort() // same cleanup as handle.dispose()
+```
 
 ### React
 
@@ -73,8 +98,8 @@ function DebugPanel({ visible }: { visible: boolean }) {
     present: visible,
     publish: publishPanelBounds,
   })
-  // The native view follows this placeholder div. Hiding the panel
-  // (visible=false or unmount) collapses it without destroying it.
+  // The external surface follows this placeholder. Hiding or unmounting it
+  // sends the collapsed value, without deciding how the surface is stored.
   return <div ref={ref} className="h-full w-full" />
 }
 ```
@@ -89,9 +114,12 @@ A zero rectangle cannot tell a hidden view from one that is visible but currentl
 import { createPlacementAnchor } from 'view-anchor'
 
 const handle = createPlacementAnchor(target, {
-  publish: (placement) => { ... },
-  followScroll: true,     // re-measure when any ancestor scrolls
-  followGeometry: true,   // poll animation frames during scrolls / drags, stop when steady
+  visible: true,
+  publish(placement) {
+    applyPlacement(placement)
+  },
+  followScroll: true, // re-measure when any ancestor scrolls
+  followGeometry: true, // poll animation frames during scrolls / drags, stop when steady
   guardDisplayNone: true, // zero-area or display:none target → { visible: false }
 })
 
@@ -108,19 +136,21 @@ Sometimes the hosted surface's size should come from its own content, for exampl
 import { createSizeAdvertiser } from 'view-anchor'
 
 const handle = createSizeAdvertiser(contentWrapper, {
-  axis: 'block',                 // one axis per advertiser: block = height, inline = width
-  publish: (size) => { ... },    // receives { axis, extent }; wire IPC → host
+  axis: 'block', // one axis per advertiser: block = height, inline = width
+  publish(size) {
+    updatePlaceholderSize(size)
+  },
 })
 
 handle.update(publish) // swap the publish channel and report the current size again
-handle.dispose()       // stop observing; never reports again
+handle.dispose() // stop observing; never reports again
 ```
 
 > **Warning:** the target must shrink to fit its content on the owned axis. If the host sets that size instead, the two sides keep reacting to each other and never settle. See [docs/bidirectional-design.md](./docs/bidirectional-design.md).
 
 ### Versioned transport across a boundary
 
-The core hands you plain `Bounds`, `Placement`, and `AdvertisedSize` values. Once those values cross a process or origin boundary, over IPC or `postMessage`, you usually want validation and ordering. The optional `view-anchor/protocol` entry adds versioned message envelopes, bounded decoding of untrusted input, a per-anchor sequence guard that drops stale messages, and a microtask batcher:
+The core hands you plain `Bounds`, `Placement`, and `AdvertisedSize` values. If an application passes them through an asynchronous or untrusted channel, it usually needs validation and ordering. The optional `view-anchor/protocol` entry adds versioned message envelopes, bounded decoding, a per-anchor sequence guard that drops stale messages, and a microtask batcher:
 
 ```ts
 import {
@@ -129,14 +159,14 @@ import {
   decodeGeometryWireValue,
 } from 'view-anchor/protocol'
 
-// sending side (renderer, iframe, ...)
-const batcher = createGeometryBatcher((batch) => ipc.send('geometry', batch))
+// `sendGeometryBatch` is supplied by your application.
+const batcher = createGeometryBatcher(sendGeometryBatch)
 const publish = createPlacementMessagePublisher(
   { anchorId: 'editor', generation: 3 },
   batcher.publish,
 )
 
-// receiving side (main process, host page, ...)
+// receiving side
 const decoded = decodeGeometryWireValue(received, { maxMessages: 100 })
 if (decoded.ok) {
   /* check the sender, then apply only newer messages */
@@ -154,10 +184,10 @@ The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 | Export                                                                      | Kind              | Purpose                                                                                                                       |
 | --------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `createViewAnchor(target, opts)`                                            | function          | Measure a DOM element and publish live bounds. A zero rect means collapsed.                                                   |
+| `createViewAnchor(target, opts)`                                            | function          | Measure a DOM element and call `publish({ x, y, width, height })`. A zero rect means collapsed.                               |
 | `createPlacementAnchor(target, opts)`                                       | function          | Same core with explicit `Placement` visibility, opt-in `followScroll` / `followGeometry` / `guardDisplayNone`, and `pulse()`. |
 | `measurePlacement(target)`                                                  | function          | Pure measurement: wraps the target rect as `{ visible: true, bounds }`.                                                       |
-| `createSizeAdvertiser(target, opts)`                                        | function          | Reverse direction: report the view's own content size to the host.                                                            |
+| `createSizeAdvertiser(target, opts)`                                        | function          | Call `publish({ axis, extent })` with one content-size axis.                                                                  |
 | `useViewAnchor(opts)` from `view-anchor/react`                              | hook              | Returns a ref callback for a placeholder element.                                                                             |
 | `usePlacementAnchor(opts)` from `view-anchor/react`                         | hook              | React adapter for the `Placement` API, including `followScroll` and `followGeometry`.                                         |
 | `Bounds`                                                                    | type              | `{ x, y, width, height }` in CSS pixels.                                                                                      |
