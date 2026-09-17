@@ -1,30 +1,23 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createPlacementAnchor } from '../src/view-anchor.js'
+import { createViewAnchor } from '../src/view-anchor.js'
 import type { Placement } from '../src/types.js'
 
-// ── press-pause-drag: the windowed RAF geometry sentinel must NOT close
+// ── press-pause-drag: the frame-following loop must NOT close
 //    while the pointer is still held down ───────────────────────────────
 //
-// Locks the press-pause-drag behaviour of the `followGeometry` sentinel.
+// Locks the press-pause-drag behaviour of the `followGeometry` frame following.
 //
-// The windowed sentinel only closes on *steady* frames AFTER release
+// The windowed frame following closes on *steady* frames AFTER release
 // (pointerup), NOT after N consecutive identical frames unconditionally — a
-// press that pauses before the drag actually starts (very common: user clicks
-// the splitter, hesitates a frame or two, THEN drags) must not close the
-// window mid-press and drop the entire subsequent drag (freezing the native
-// view at its pre-drag position).
+// press that pauses before the drag starts must not close the window mid-press
+// and drop the drag.
 //
 // This file pins:
-//   1. press-pause-drag: pointerdown → ≥2 static frames (current close
-//      threshold) → rect starts moving → the movement is STILL followed.
-//      The pointerHeld gate keeps the sentinel open through the static pause
-//      so the later drag frames still find a scheduled rAF.
-//   2. no-regression: pointerup → static frames → the sentinel still
-//      eventually closes (we must not "fix" #1 by keeping the window open
-//      forever / spinning a rAF while idle).
+//   1. press-pause-drag: pointerdown → ≥2 static frames → rect starts moving →
+//      the movement is STILL followed.
+//   2. no-regression: pointerup → static frames → frame following still closes.
 
-// ── Controllable fake requestAnimationFrame (mirrors view-anchor.test.ts'
-//    FakeRaf: a queue we flush one frame at a time). ───────────────────
+// ── Controllable fake requestAnimationFrame ─────────────────────────────────
 class FakeRaf {
   private cbs = new Map<number, FrameRequestCallback>()
   private nextId = 1
@@ -43,14 +36,13 @@ class FakeRaf {
     this.cbs.clear()
     for (const [, cb] of pending) cb(ts)
   }
-  /** Is a frame currently scheduled (sentinel window still open)? */
+  /** Is a frame currently scheduled (frame-following window still open)? */
   get pending(): number {
     return this.cbs.size
   }
 }
 
-// ── Minimal ResizeObserver stub (the anchor installs one on a visible
-//    target; jsdom has none). We never need to fire it here. ───────────
+// ── Minimal ResizeObserver stub ──────────────────────────────────────────────
 class FakeResizeObserver {
   static instances: FakeResizeObserver[] = []
   observed: Element[] = []
@@ -87,8 +79,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// jsdom's getBoundingClientRect returns zeros; stub it and let `setRect`
-// move the element after creation (to drive the sentinel's poll).
+// jsdom's getBoundingClientRect returns zeros; stub it so tests can control
+// the element's rect.
 function buildElement(rect: { x: number; y: number; w: number; h: number }): {
   el: HTMLElement
   setRect: (next: { x: number; y: number; w: number; h: number }) => void
@@ -117,8 +109,8 @@ function buildElement(rect: { x: number; y: number; w: number; h: number }): {
   }
 }
 
-/** A `[role="separator"]` splitter (the drag handle): a capture-phase
- *  pointerdown matching it opens the sentinel window. */
+/** A `[role="separator"]` splitter: a capture-phase pointerdown matching it
+ *  opens a frame-following window. */
 function buildSplitter(): HTMLElement {
   const sep = document.createElement('div')
   sep.setAttribute('role', 'separator')
@@ -130,33 +122,36 @@ function dispatchPointerdown(target: HTMLElement): void {
   target.dispatchEvent(new Event('pointerdown', { bubbles: true }))
 }
 
-/** Pointer release — dispatched bubbling from the splitter so a window
- *  capture/bubble listener sees it. Also dispatched on window directly as a
- *  belt-and-braces in case the close is gated on a window-level pointerup. */
+/** Dispatch a pointerup from the splitter so window capture/bubble listeners
+ *  see it. Also dispatched on window directly in case the close is gated on
+ *  a window-level pointerup. */
 function dispatchPointerup(target: HTMLElement): void {
   target.dispatchEvent(new Event('pointerup', { bubbles: true }))
   window.dispatchEvent(new Event('pointerup'))
 }
 
 // new options aren't on the public types yet — cast through.
-type FollowOpts = Parameters<typeof createPlacementAnchor>[1] & {
+type FollowOpts = Parameters<typeof createViewAnchor>[1] & {
   followGeometry?: boolean
 }
 const mk = (
   el: HTMLElement,
-  o: { visible: boolean; publish: (p: Placement) => void; followGeometry?: boolean },
-): ReturnType<typeof createPlacementAnchor> => createPlacementAnchor(el, o as FollowOpts)
+  o: {
+    visible: boolean
+    publish: (p: Placement) => void
+    followGeometry?: boolean
+    holdSelector?: string | null
+  },
+): ReturnType<typeof createViewAnchor> => createViewAnchor(el, o as FollowOpts)
 
-describe('createPlacementAnchor — press-pause-drag (followGeometry sentinel must survive a held pause)', () => {
-  // 1. THE BUG. pointerdown opens the window; the user then hesitates for a
-  //    couple of frames (rect identical) BEFORE starting to drag. While the
-  //    pointer is still DOWN, those static frames must NOT permanently close
-  //    the sentinel — when the drag finally moves the rect, the move must
-  //    still be followed.
+describe('createViewAnchor — press-pause-drag (followGeometry frame following must survive a held pause)', () => {
+  // 1. THE BUG. pointerdown opens the window; the user then hesitates
+  //    before dragging. While the pointer is still DOWN, static frames
+  //    must NOT close frame following.
   it('pointerdown → static pause (≥2 identical frames) → drag moves: the drag is STILL followed', () => {
     const publish = vi.fn<(p: Placement) => void>()
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
-    mk(el, { visible: true, followGeometry: true, publish })
+    mk(el, { visible: true, followGeometry: true, holdSelector: '[role="separator"]', publish })
     const splitter = buildSplitter()
 
     // Press the splitter — window opens, a frame is scheduled.
@@ -164,27 +159,22 @@ describe('createPlacementAnchor — press-pause-drag (followGeometry sentinel mu
     expect(raf.request).toHaveBeenCalled()
     publish.mockClear()
 
-    // Held pause: TWO consecutive identical frames (== the close threshold the
-    // B-close test pins). Under the buggy impl these close the window even
-    // though the pointer is still down.
-    raf.flushFrame() // static frame 1 (rect unchanged since open)
+    // Held pause: two consecutive identical frames. Under the buggy impl
+    // these close the window even though the pointer is still down.
+    raf.flushFrame() // static frame 1
     raf.flushFrame() // static frame 2
 
-    // Now the drag actually begins: rect moves on subsequent frames. Because
-    // the pointer was never released, the sentinel must still be polling.
+    // The drag begins: pointer never released, so frame following must still poll.
     setRect({ x: 25, y: 0, w: 100, h: 100 })
     raf.flushFrame()
 
-    // The bug: the static pause closed the window, so this drag frame either
-    // ran nothing (no rAF pending) → publish never called, OR (if the window
-    // was already cancelled) `raf.pending` is 0 and the move is lost.
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenLastCalledWith({
       visible: true,
       bounds: { x: 25, y: 0, width: 100, height: 100 },
     })
 
-    // And it keeps following further drag frames within the same press.
+    // Further drag frames within the same press are still followed.
     setRect({ x: 50, y: 0, w: 100, h: 100 })
     raf.flushFrame()
     expect(publish).toHaveBeenCalledTimes(2)
@@ -194,14 +184,11 @@ describe('createPlacementAnchor — press-pause-drag (followGeometry sentinel mu
     })
   })
 
-  // 1b. A stricter restatement: the window stays OPEN (a frame remains
-  //     scheduled) across a held static pause. This isolates the mechanism —
-  //     even before any further move, the sentinel must not have stopped
-  //     re-arming while the pointer is held.
-  it('the sentinel window stays open (a frame stays scheduled) across a held static pause', () => {
+  // 1b. The window stays OPEN across a held static pause.
+  it('frame-following window stays open (a frame stays scheduled) across a held static pause', () => {
     const publish = vi.fn<(p: Placement) => void>()
     const { el } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
-    mk(el, { visible: true, followGeometry: true, publish })
+    mk(el, { visible: true, followGeometry: true, holdSelector: '[role="separator"]', publish })
     const splitter = buildSplitter()
 
     dispatchPointerdown(splitter)
@@ -215,13 +202,12 @@ describe('createPlacementAnchor — press-pause-drag (followGeometry sentinel mu
     expect(raf.pending).toBeGreaterThanOrEqual(1)
   })
 
-  // 2. NO REGRESSION. After the pointer is RELEASED (pointerup), a steady
-  //    geometry must still close the window — we must not "fix" #1 by leaving
-  //    the sentinel spinning forever once a press has started.
-  it('pointerup then steady frames → the sentinel still closes (does not spin forever)', () => {
+  // 2. NO REGRESSION. After pointerup, a steady geometry must still close
+  //    the window — frame following must not spin forever after a press.
+  it('pointerup then steady frames → frame following still closes (does not spin forever)', () => {
     const publish = vi.fn<(p: Placement) => void>()
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
-    mk(el, { visible: true, followGeometry: true, publish })
+    mk(el, { visible: true, followGeometry: true, holdSelector: '[role="separator"]', publish })
     const splitter = buildSplitter()
 
     dispatchPointerdown(splitter)
@@ -238,11 +224,39 @@ describe('createPlacementAnchor — press-pause-drag (followGeometry sentinel mu
     raf.flushFrame()
     raf.flushFrame()
 
-    // Window must have closed: no frame pending and a further flush schedules
-    // nothing new (no idle spin).
+    // Window must have closed: no frame pending and a further flush schedules nothing.
     const requestsBefore = raf.request.mock.calls.length
     raf.flushFrame()
     expect(raf.pending).toBe(0)
     expect(raf.request.mock.calls.length).toBe(requestsBefore)
+  })
+
+  // 3. A long held pause must not use up the hidden-frame budget.
+  it('a long held pause followed by one transient hidden frame keeps following the drag', () => {
+    const publish = vi.fn<(p: Placement) => void>()
+    const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
+    createViewAnchor(el, {
+      visible: true,
+      followGeometry: true,
+      treatZeroAreaAsHidden: true,
+      holdSelector: '[role="separator"]',
+      publish,
+    })
+    const splitter = buildSplitter()
+
+    dispatchPointerdown(splitter)
+    for (let frame = 0; frame < 40; frame++) raf.flushFrame()
+    publish.mockClear()
+
+    setRect({ x: 0, y: 0, w: 0, h: 100 })
+    raf.flushFrame()
+
+    setRect({ x: 40, y: 0, w: 100, h: 100 })
+    raf.flushFrame()
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenLastCalledWith({
+      visible: true,
+      bounds: { x: 40, y: 0, width: 100, height: 100 },
+    })
   })
 })

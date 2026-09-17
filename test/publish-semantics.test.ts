@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createSizeAdvertiser } from '../src/size-advertiser.js'
-import { createPlacementAnchor, createViewAnchor } from '../src/view-anchor.js'
-import type { AdvertisedSize, Bounds, Placement, Publisher } from '../src/types.js'
+import { createSizeAnchor } from '../src/size-anchor.js'
+import { createViewAnchor } from '../src/view-anchor.js'
+import type { SizeMeasurement, Bounds, Placement, Publisher } from '../src/types.js'
 
 class FakeResizeObserver {
   static instances: FakeResizeObserver[] = []
@@ -81,51 +81,11 @@ function element(rect = { left: 1, top: 2, width: 30, height: 40 }): {
 }
 
 describe('publish acceptance', () => {
-  it('retries rejected and thrown forward publishes, while preserving a re-entrant inner baseline', () => {
-    const { el, setRect } = element()
-    const calls: Bounds[] = []
-    let behavior: 'accept' | 'reject' | 'throw' | 'reentrant' = 'accept'
-    const anchor: { handle?: ReturnType<typeof createViewAnchor> } = {}
-    const inner = vi.fn<(value: Bounds) => void>()
-    const publish: Publisher<Bounds> = (value) => {
-      calls.push(value)
-      if (behavior === 'reject') return false
-      if (behavior === 'throw') throw new Error('transport unavailable')
-      if (behavior === 'reentrant') {
-        anchor.handle!.update({ present: true, publish: inner })
-        return false
-      }
-    }
-    anchor.handle = createViewAnchor(el, { present: true, publish })
-    calls.length = 0
-    setRect({ left: 3, top: 2, width: 30, height: 40 })
-    behavior = 'reject'
-    FakeResizeObserver.instances[0]!.fire()
-    behavior = 'accept'
-    FakeResizeObserver.instances[0]!.fire()
-    expect(calls).toHaveLength(2)
-
-    behavior = 'throw'
-    setRect({ left: 4, top: 2, width: 30, height: 40 })
-    expect(() => FakeResizeObserver.instances[0]!.fire()).toThrow('transport unavailable')
-    behavior = 'accept'
-    FakeResizeObserver.instances[0]!.fire()
-    expect(calls).toHaveLength(4)
-
-    behavior = 'reentrant'
-    setRect({ left: 5, top: 2, width: 30, height: 40 })
-    FakeResizeObserver.instances[0]!.fire()
-    // The rejected outer call must not restore its stale candidate over the
-    // synchronous update() publish made by the inner callback.
-    FakeResizeObserver.instances.at(-1)!.fire()
-    expect(inner).toHaveBeenCalledTimes(1)
-  })
-
   it('retries rejected and thrown placement publishes', () => {
     const { el, setRect } = element()
     let result: boolean | undefined = undefined
     const publish = vi.fn<(value: Placement) => boolean | undefined>(() => result)
-    createPlacementAnchor(el, { visible: true, publish })
+    createViewAnchor(el, { visible: true, publish })
     publish.mockClear()
     setRect({ left: 4, top: 2, width: 30, height: 40 })
     result = false
@@ -143,13 +103,35 @@ describe('publish acceptance', () => {
     expect(publish).toHaveBeenCalledTimes(4)
   })
 
+  it('keeps a re-entrant inner placement baseline when the outer publish is rejected', () => {
+    const { el, setRect } = element()
+    const anchor: { handle?: ReturnType<typeof createViewAnchor> } = {}
+    const inner = vi.fn<(value: Placement) => void>()
+    let reenter = false
+    const publish = (): boolean => {
+      if (!reenter) return true
+      reenter = false
+      anchor.handle!.update({ visible: true, publish: inner })
+      return false
+    }
+    anchor.handle = createViewAnchor(el, { visible: true, publish })
+    setRect({ left: 5, top: 2, width: 30, height: 40 })
+    reenter = true
+    FakeResizeObserver.instances.at(-1)!.fire()
+    expect(inner).toHaveBeenCalledTimes(1)
+    // The rejected outer call must not restore its stale baseline over the
+    // synchronous update() publish, so the same rect is not published again.
+    FakeResizeObserver.instances.at(-1)!.fire()
+    expect(inner).toHaveBeenCalledTimes(1)
+  })
+
   it('retries rejected and thrown reverse publishes', () => {
     let state: 'reject' | 'throw' | 'accept' = 'reject'
-    const publish = vi.fn<(value: AdvertisedSize) => boolean | undefined>(() => {
+    const publish = vi.fn<(value: SizeMeasurement) => boolean | undefined>(() => {
       if (state === 'reject') return false
       if (state === 'throw') throw new Error('reverse down')
     })
-    createSizeAdvertiser(document.createElement('div'), { axis: 'block', publish })
+    createSizeAnchor(document.createElement('div'), { axis: 'block', publish })
     const observer = FakeResizeObserver.instances[0]!
     observer.fireSize(80)
     flushFrame()
@@ -166,6 +148,29 @@ describe('publish acceptance', () => {
     flushFrame()
     expect(publish).toHaveBeenCalledTimes(4)
   })
+
+  it('keeps a re-entrant inner baseline when a reverse publish is rejected', () => {
+    const anchor: { handle?: ReturnType<typeof createSizeAnchor> } = {}
+    const inner = vi.fn<(value: SizeMeasurement) => void>()
+    const outer: Publisher<SizeMeasurement> = () => {
+      anchor.handle!.update({ publish: inner })
+      return false
+    }
+    anchor.handle = createSizeAnchor(document.createElement('div'), {
+      axis: 'block',
+      publish: outer,
+    })
+    const observer = FakeResizeObserver.instances[0]!
+    observer.fireSize(100)
+    flushFrame()
+    expect(inner).toHaveBeenCalledWith({ axis: 'block', extent: 100 })
+
+    // The rejected outer call must not restore its stale baseline over the
+    // extent that update() already delivered to the inner callback.
+    observer.fireSize(100)
+    flushFrame()
+    expect(inner).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('automatic geometry rejects non-finite DOMRect fields', () => {
@@ -174,10 +179,10 @@ describe('automatic geometry rejects non-finite DOMRect fields', () => {
 
   for (const field of fields) {
     for (const invalid of invalids) {
-      it(`does not publish a ${String(invalid)} ${field}, and keeps the last valid forward baseline`, () => {
+      it(`does not publish a ${String(invalid)} ${field}, and keeps the last valid baseline`, () => {
         const { el, setRect } = element()
-        const publish = vi.fn<(value: Bounds) => void>()
-        createViewAnchor(el, { present: true, publish })
+        const publish = vi.fn<(value: Placement) => void>()
+        createViewAnchor(el, { visible: true, publish })
         publish.mockClear()
         setRect({ left: 1, top: 2, width: 30, height: 40, [field]: invalid })
         FakeResizeObserver.instances[0]!.fire()
@@ -188,25 +193,13 @@ describe('automatic geometry rejects non-finite DOMRect fields', () => {
       })
     }
   }
-
-  it('also drops an invalid placement measurement without changing its valid baseline', () => {
-    const { el, setRect } = element()
-    const publish = vi.fn<(value: Placement) => void>()
-    createPlacementAnchor(el, { visible: true, publish })
-    publish.mockClear()
-    setRect({ left: Number.NaN, top: 2, width: 30, height: 40 })
-    FakeResizeObserver.instances[0]!.fire()
-    setRect({ left: 1, top: 2, width: 30, height: 40 })
-    FakeResizeObserver.instances[0]!.fire()
-    expect(publish).not.toHaveBeenCalled()
-  })
 })
 
-describe('geometry sentinel invalid-measure bounds', () => {
+describe('geometry frame following invalid-measure bounds', () => {
   it('stops after a bounded run of invalid geometry, without publishing it', () => {
     const { el, setRect } = element()
     const publish = vi.fn<(value: Placement) => void>()
-    const handle = createPlacementAnchor(el, {
+    const handle = createViewAnchor(el, {
       visible: true,
       followGeometry: true,
       publish,
@@ -226,7 +219,7 @@ describe('geometry sentinel invalid-measure bounds', () => {
   it('keeps following when a short invalid measurement recovers', () => {
     const { el, setRect } = element()
     const publish = vi.fn<(value: Placement) => void>()
-    const handle = createPlacementAnchor(el, {
+    const handle = createViewAnchor(el, {
       visible: true,
       followGeometry: true,
       publish,
@@ -248,7 +241,7 @@ describe('geometry sentinel invalid-measure bounds', () => {
   it('gives a second pulse a fresh invalid budget after the first window naturally closes', () => {
     const { el, setRect } = element()
     const publish = vi.fn<(value: Placement) => void>()
-    const handle = createPlacementAnchor(el, {
+    const handle = createViewAnchor(el, {
       visible: true,
       followGeometry: true,
       publish,
@@ -273,7 +266,7 @@ describe('geometry sentinel invalid-measure bounds', () => {
   it('keeps following 1000 valid moving frames and dispose drops the queued frame', () => {
     const { el, setRect } = element()
     const publish = vi.fn<(value: Placement) => void>()
-    const handle = createPlacementAnchor(el, {
+    const handle = createViewAnchor(el, {
       visible: true,
       followGeometry: true,
       publish,
@@ -293,23 +286,10 @@ describe('geometry sentinel invalid-measure bounds', () => {
 })
 
 describe('same-value event storms', () => {
-  it('deduplicates 100k forward observer ticks without creating a RAF backlog', () => {
-    const { el, setRect } = element()
-    const publish = vi.fn<(value: Bounds) => void>()
-    createViewAnchor(el, { present: true, publish })
-    publish.mockClear()
-    setRect({ left: 4, top: 2, width: 30, height: 40 })
-    const observer = FakeResizeObserver.instances[0]!
-    for (let index = 0; index < 100_000; index++) observer.fire()
-
-    expect(publish).toHaveBeenCalledExactlyOnceWith({ x: 4, y: 2, width: 30, height: 40 })
-    expect(frames).toHaveLength(0)
-  })
-
   it('deduplicates 10k placement observer ticks without creating a RAF backlog', () => {
     const { el, setRect } = element()
     const publish = vi.fn<(value: Placement) => void>()
-    createPlacementAnchor(el, { visible: true, publish })
+    createViewAnchor(el, { visible: true, publish })
     publish.mockClear()
     setRect({ left: 4, top: 2, width: 30, height: 40 })
     const observer = FakeResizeObserver.instances[0]!
@@ -323,8 +303,8 @@ describe('same-value event storms', () => {
   })
 })
 
-// A transport must synchronously say whether it accepted the value. Promises
-// belong in the transport's own queue/retry layer, not in the anchor callback.
+// Transport must synchronously report whether it accepted the value.
+// Promises belong in the transport's own queue/retry layer.
 const asyncPublisher = async (_value: Bounds): Promise<void> => {}
 // @ts-expect-error asynchronous publishers are not accepted by the core API
 const rejectedAsyncPublisher: Publisher<Bounds> = asyncPublisher

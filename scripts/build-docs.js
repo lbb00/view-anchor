@@ -1,10 +1,10 @@
-// Bundle the view-anchor core (src/view-anchor.ts) and inline it into the
-// standalone 3D demo (docs/index.html) between the marker comments.
+// Bundle the view-anchor core (src/view-anchor.ts and src/size-anchor.ts)
+// and inline it into the standalone 3D demo (docs/index.html) between the
+// marker comments.
 //
-// Why inline rather than `import './core.js'`: the demo is meant to open by
-// double-click (file://), where browsers block ES-module imports as cross-origin
-// (origin "null"). Inlining keeps the page self-contained while still using the
-// real built artifact — the block below is GENERATED from src, never hand-edited.
+// The demo is meant to open by double-click (file://), where browsers block
+// ES-module imports as cross-origin (origin "null"). Inlining keeps the page
+// self-contained. The block below is GENERATED from src, never hand-edited.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,12 +14,27 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const htmlPath = resolve(root, 'docs/index.html')
 
 const START =
-  '/* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts by `pnpm build:docs`; do not edit */'
+  '/* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts and src/size-anchor.ts by `pnpm build:docs`; do not edit */'
 const END = '/* __VIEW_ANCHOR_CORE_END__ */'
 
+// Virtual entry: the demo needs both directions, but not the React hook that
+// src/index.ts re-exports.
+const ENTRY = '\0docs-core-entry'
+const entrySource = [
+  `export * from ${JSON.stringify(resolve(root, 'src/view-anchor.ts'))}`,
+  `export * from ${JSON.stringify(resolve(root, 'src/size-anchor.ts'))}`,
+].join('\n')
+
 const bundle = await rolldown({
-  input: resolve(root, 'src/view-anchor.ts'),
+  input: ENTRY,
   transform: { target: 'es2020' },
+  plugins: [
+    {
+      name: 'docs-core-entry',
+      resolveId: (id) => (id === ENTRY ? ENTRY : null),
+      load: (id) => (id === ENTRY ? entrySource : null),
+    },
+  ],
 })
 let code
 try {

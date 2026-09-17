@@ -502,12 +502,11 @@ describe('publisher identity contract', () => {
     flushMicrotasks()
     expect(send).toHaveBeenCalledTimes(1)
 
-    // A new publisher for the SAME {anchorId, generation} restarts its own
-    // `seq` at 1 — but the batcher already recorded seq 1 as this anchor's
-    // high-water mark, so the recreated publisher's first message is silently
-    // dropped. Callers must hold one publisher stable for the life of a
-    // generation (e.g. via useMemo/useRef in React) and bump `generation`
-    // whenever a genuinely new publisher is needed.
+    // A new publisher for the same {anchorId, generation} restarts its own
+    // `seq` at 1, but the batcher already recorded seq 1 as the high-water
+    // mark, so the recreated publisher's first message is silently dropped.
+    // Hold one publisher stable per generation (e.g. via useMemo/useRef in
+    // React) and bump `generation` whenever a new publisher is needed.
     const second = createPlacementMessagePublisher(address, batcher.publish)
     expect(second({ visible: true, bounds: { x: 1, y: 1, width: 20, height: 20 } })).toBe(true)
     flushMicrotasks()

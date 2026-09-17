@@ -1,21 +1,19 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createPlacementAnchor } from '../src/view-anchor.js'
+import { createViewAnchor } from '../src/view-anchor.js'
 import type { Placement } from '../src/types.js'
 
-// Locks the correct behaviour of the followGeometry sentinel when a
-// guardDisplayNone anchor's slot momentarily measures 0×0 during a
-// relayout (e.g. device/orientation switch).
+// ── follow-geometry: transient-zero path ──────────────────────────────────────
 //
-// On a slot transition the dock reflows; for one or more animation frames
-// the slot rect collapses to 0×0 before being restored to its real non-zero
-// size. ResizeObserver coalesces the net B→0→B change away and never fires,
-// so the ONLY observer of the transient zero is the RAF sentinel.
+// When `treatZeroAreaAsHidden` is on and frame following is active, the loop
+// may encounter a 0×0 frame in the middle of a drag (a brief CSS collapse
+// during layout). These are not real detaches: the drag continues on the next
+// non-zero frame, and detaching stays owned by ResizeObserver and
+// IntersectionObserver rather than the frame loop.
 //
-// Correct behaviour: the sentinel MUST NOT publish {visible:false} from a
-// transient zero poll. Detaching is owned by ResizeObserver / IntersectionObserver,
-// not the sentinel. After a transient-zero-then-restore sequence driven
-// purely through the sentinel (no RO fire), the final placement must be
-// {visible:true, bounds:<restored rect>}.
+// Pins two constraints:
+//   1. Hidden frames during frame following must NOT publish { visible:false }.
+//   2. A bounded run of hidden frames terminates the loop if recovery never
+//      happens; a single transient hidden frame must NOT close the loop.
 
 // ── Controllable fake requestAnimationFrame ──────────────────────────────
 class FakeRaf {
@@ -106,11 +104,11 @@ function buildElement(rect: { x: number; y: number; w: number; h: number }): {
   }
 }
 
-// Options cast: followGeometry / guardDisplayNone not on the exported TS
+// Options cast: followGeometry / treatZeroAreaAsHidden not on the exported TS
 // types yet — cast through so tests compile without touching the types file.
-type PlacementOpts = Parameters<typeof createPlacementAnchor>[1] & {
+type PlacementOpts = Parameters<typeof createViewAnchor>[1] & {
   followGeometry?: boolean
-  guardDisplayNone?: boolean
+  treatZeroAreaAsHidden?: boolean
 }
 const mk = (
   el: HTMLElement,
@@ -118,13 +116,13 @@ const mk = (
     visible: boolean
     publish: (p: Placement) => void
     followGeometry?: boolean
-    guardDisplayNone?: boolean
+    treatZeroAreaAsHidden?: boolean
   },
-): ReturnType<typeof createPlacementAnchor> => createPlacementAnchor(el, o as PlacementOpts)
+): ReturnType<typeof createViewAnchor> => createViewAnchor(el, o as PlacementOpts)
 
-describe('createPlacementAnchor — followGeometry sentinel must not detach on a transient zero-area poll', () => {
+describe('createViewAnchor — followGeometry frame following must not detach on a transient zero-area poll', () => {
   // Core bug: slot goes 0×0 transiently during a dock relayout; RO never
-  // fires (net change is zero); the sentinel is the only observer. The sentinel
+  // fires (net change is zero); frame following is the only observer. Frame following
   // must NOT publish {visible:false} and must not close on the zero frames so
   // it can follow the restored rect.
   it('transient 0×0 poll → restore: final placement is visible:true (not a detach)', () => {
@@ -133,7 +131,7 @@ describe('createPlacementAnchor — followGeometry sentinel must not detach on a
 
     mk(el, {
       visible: true,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followGeometry: true,
       publish: (p) => publishes.push(p),
     })
@@ -145,15 +143,15 @@ describe('createPlacementAnchor — followGeometry sentinel must not detach on a
       bounds: { x: 0, y: 0, width: 400, height: 800 },
     })
 
-    // Open the sentinel (imperative pulse, no duration → steady-close only,
+    // Open frame following (imperative pulse, no duration → steady-close only,
     // no time-stubbing needed).
     const anchor = mk(el, {
       visible: true,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followGeometry: true,
       publish: (p) => publishes.push(p),
     })
-    // Reset to track only the sentinel's publishes from here on.
+    // Reset to track only the frame loop's publishes from here on.
     publishes.length = 0
     anchor.pulse()
 
@@ -162,7 +160,7 @@ describe('createPlacementAnchor — followGeometry sentinel must not detach on a
     setRect({ x: 0, y: 0, w: 0, h: 0 })
 
     // Flush enough frames to exceed the steady-close threshold (STEADY_CLOSE_FRAMES=2)
-    // so the buggy sentinel closes on the zero.
+    // so the buggy frame loop closes on the zero.
     raf.flushFrame() // frame 1 at zero
     raf.flushFrame() // frame 2 at zero
     raf.flushFrame() // frame 3 at zero — buggy path closes here
@@ -170,14 +168,14 @@ describe('createPlacementAnchor — followGeometry sentinel must not detach on a
     // Now restore the slot to its real (moved) non-zero rect.
     setRect({ x: 120, y: 0, w: 400, h: 800 })
 
-    // Drive additional frames; with the fix the sentinel is still open and
-    // picks up the restored rect. With the bug the sentinel already closed —
+    // Drive additional frames; with the fix frame following is still open and
+    // picks up the restored rect. With the bug frame following already closed —
     // these flushes are no-ops but that's fine: the assertion is on the LAST
     // published placement regardless.
     raf.flushFrame()
     raf.flushFrame()
 
-    // The sentinel must NEVER have emitted {visible:false}.
+    // Frame following must NEVER have emitted {visible:false}.
     const detaches = publishes.filter((p) => p.visible === false)
     expect(detaches).toHaveLength(0)
 
@@ -187,16 +185,16 @@ describe('createPlacementAnchor — followGeometry sentinel must not detach on a
     expect(last).toMatchObject({ visible: true })
   })
 
-  // No-regression: the sentinel must still follow a normal visible move
+  // No-regression: frame following must still follow a normal visible move
   // (pulse → setRect to moved non-zero rect → flushFrame → published).
-  // Guards against a "fix" that simply disables sentinel publishing.
-  it('sentinel follows a normal visible-rect move after pulse()', () => {
+  // Guards against a "fix" that simply disables frame following publishing.
+  it('frame following follows a normal visible-rect move after pulse()', () => {
     const publishes: Placement[] = []
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 400, h: 800 })
 
     const anchor = mk(el, {
       visible: true,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followGeometry: true,
       publish: (p) => publishes.push(p),
     })
@@ -214,18 +212,18 @@ describe('createPlacementAnchor — followGeometry sentinel must not detach on a
     })
   })
 
-  // Defensive bound: while the sentinel keeps FOLLOWING a hidden poll (a
+  // Defensive bound: while frame following keeps FOLLOWING a hidden poll (a
   // relayout transient where last-published is still visible and RO/IO never
   // fire), it must not spin forever. After a finite run of consecutive hidden
   // polls it stops scheduling new frames (window closes) — and it must STILL
   // never publish a {visible:false} detach during that bounded run.
-  it('sentinel stops polling after a bounded run of hidden frames — no infinite rAF, no detach', () => {
+  it('frame following stops polling after a bounded run of hidden frames — no infinite rAF, no detach', () => {
     const publishes: Placement[] = []
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 400, h: 800 })
 
     const anchor = mk(el, {
       visible: true,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followGeometry: true,
       publish: (p) => publishes.push(p),
     })
@@ -236,7 +234,7 @@ describe('createPlacementAnchor — followGeometry sentinel must not detach on a
     // Slot collapses to 0×0 and stays hidden. RO/IO never fire.
     setRect({ x: 0, y: 0, w: 0, h: 0 })
 
-    // Drive frames until the sentinel closes on its own (raf.pending === 0),
+    // Drive frames until frame following closes on its own (raf.pending === 0),
     // with a hard safety break so a genuinely unbounded spin still terminates
     // the test instead of hanging.
     let n = 0
@@ -245,7 +243,7 @@ describe('createPlacementAnchor — followGeometry sentinel must not detach on a
       if (++n > 200) break
     }
 
-    // The loop terminated because the sentinel CLOSED (pending → 0), not
+    // The loop terminated because frame following CLOSED (pending → 0), not
     // because the safety break fired, and it converged quickly.
     expect(raf.pending).toBe(0)
     expect(n).toBeLessThan(100)

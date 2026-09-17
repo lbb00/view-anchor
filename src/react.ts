@@ -1,11 +1,6 @@
-import { useCallback, useEffect, useRef } from 'react'
-import {
-  createPlacementAnchor,
-  createViewAnchor,
-  type PlacementAnchorHandle,
-  type PlacementAnchorOptions,
-} from './view-anchor.js'
-import type { Bounds, ViewAnchorHandle, ViewAnchorOptions } from './types.js'
+import { useCallback, useEffect, useInsertionEffect, useRef, version } from 'react'
+import { createViewAnchor, type ViewAnchorHandle } from './view-anchor.js'
+import type { ViewAnchorOptions } from './view-anchor.js'
 
 export interface UseViewAnchorOptions extends ViewAnchorOptions {
   /**
@@ -18,24 +13,13 @@ export interface UseViewAnchorOptions extends ViewAnchorOptions {
 /** Compatible with React 18's null callback and React 19's ref cleanup. */
 export type ViewAnchorRef = (el: HTMLElement | null) => void | (() => void)
 
-export interface UsePlacementAnchorOptions extends PlacementAnchorOptions {
-  /**
-   * Values that re-apply the anchor when changed. Keep this array's length
-   * stable across renders.
-   */
-  deps?: ReadonlyArray<unknown>
-}
-
-/** Callback ref for the explicit-visibility Placement API. */
-export type PlacementAnchorRef = ViewAnchorRef
-
 type AnchorHandle = { dispose(): void }
 
 interface LifecycleAdapter<Options, Handle extends AnchorHandle> {
   create(target: HTMLElement, options: Options): Handle
   update(handle: Handle, options: Options): void
   collapse(handle: Handle, options: Options): void
-  isCollapsed(options: Options): boolean
+  isCollapsed(handle: Handle, options: Options): boolean
 }
 
 // Callback refs own the imperative anchor because React invokes them during commit.
@@ -50,12 +34,16 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
   const handleRef = useRef<Handle | null>(null)
   const elementRef = useRef<HTMLElement | null>(null)
   const optionsRef = useRef(options)
-  optionsRef.current = options
   const adapterRef = useRef(adapter)
-  adapterRef.current = adapter
   const appliedRef = useRef(applied)
   const currentAppliedRef = useRef(applied)
-  currentAppliedRef.current = applied
+  // Renders discarded before commit (e.g. suspended transitions) must not
+  // update optionsRef. Insertion effects run before callback refs in the same commit.
+  useInsertionEffect(() => {
+    optionsRef.current = options
+    adapterRef.current = adapter
+    currentAppliedRef.current = applied
+  })
   // Options handed to the adapter on the last create/update call.
   // Tracks applied state across renders where the deps array reference changes.
   const lastAppliedOptionsRef = useRef(options)
@@ -69,7 +57,7 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
     const handle = handleRef.current
     if (!handle) return
     const adapter = adapterRef.current
-    const alreadyCollapsed = adapter.isCollapsed(lastAppliedOptionsRef.current)
+    const alreadyCollapsed = adapter.isCollapsed(handle, lastAppliedOptionsRef.current)
     try {
       if (!alreadyCollapsed) adapter.collapse(handle, optionsRef.current)
     } finally {
@@ -87,10 +75,15 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
     })
   }
 
+  // React 19 invokes the cleanup returned from a callback ref instead of calling
+  // ref(null). React 18 warns about the returned function and still calls ref(null).
+  const detachCleanup = (element: HTMLElement): (() => void) | undefined =>
+    Number.parseInt(version, 10) >= 19 ? () => deferDetach(element) : undefined
+
   const ref = useCallback<ViewAnchorRef>((element) => {
     if (element === elementRef.current) {
       cancelPendingDetach()
-      return element ? () => deferDetach(element) : undefined
+      return element ? detachCleanup(element) : undefined
     }
 
     cancelPendingDetach()
@@ -110,7 +103,7 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
       handleRef.current = adapterRef.current.create(element, optionsRef.current)
       appliedRef.current = currentAppliedRef.current
       lastAppliedOptionsRef.current = optionsRef.current
-      return () => deferDetach(element)
+      return detachCleanup(element)
     }
     return undefined
   }, [])
@@ -141,62 +134,56 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
   return ref
 }
 
+// Whether each handle's latest { visible: false } was accepted. The core does
+// not retry a rejected hidden placement, so unmount must send it again.
+type HideState = { accepted: boolean }
+const hideStates = new WeakMap<ViewAnchorHandle, HideState>()
+
+const trackHide = (options: ViewAnchorOptions, state: HideState): ViewAnchorOptions => ({
+  ...options,
+  publish(placement) {
+    if (placement.visible) return options.publish(placement)
+    state.accepted = false
+    const result = options.publish(placement)
+    state.accepted = result !== false
+    return result
+  },
+})
+
 const viewAdapter: LifecycleAdapter<ViewAnchorOptions, ViewAnchorHandle> = {
-  create: createViewAnchor,
+  create(target, options) {
+    const state: HideState = { accepted: false }
+    const handle = createViewAnchor(target, trackHide(options, state))
+    hideStates.set(handle, state)
+    return handle
+  },
   update(handle, options) {
-    handle.update(options)
+    // Options are forwarded as-is; the hook applies the same "omitted resets
+    // to default" rule as the core's update().
+    handle.update(trackHide(options, hideStates.get(handle)!))
   },
   collapse(handle, options) {
-    handle.update({ present: false, publish: options.publish })
+    handle.update(trackHide({ ...options, visible: false }, hideStates.get(handle)!))
   },
-  isCollapsed(options) {
-    return !options.present
-  },
-}
-
-/** Bind zero-bounds visibility to a DOM element callback ref. */
-export function useViewAnchor(options: UseViewAnchorOptions): ViewAnchorRef {
-  return useAnchorRef(
-    options,
-    [options.present, options.publish, ...(options.deps ?? [])],
-    viewAdapter,
-  )
-}
-
-const placementAdapter: LifecycleAdapter<PlacementAnchorOptions, PlacementAnchorHandle> = {
-  create: createPlacementAnchor,
-  update(handle, options) {
-    // In React, an omitted option represents "off" for that render,
-    // rather than keeping the previous value.
-    handle.update({
-      ...options,
-      guardDisplayNone: options.guardDisplayNone ?? false,
-      followScroll: options.followScroll ?? false,
-      followGeometry: options.followGeometry ?? false,
-    })
-  },
-  collapse(handle, options) {
-    handle.update({ ...options, visible: false })
-  },
-  isCollapsed(options) {
-    return !options.visible
+  isCollapsed(handle, options) {
+    return !options.visible && hideStates.get(handle)!.accepted
   },
 }
 
 /** Bind the explicit Placement API to a DOM element callback ref. */
-export function usePlacementAnchor(options: UsePlacementAnchorOptions): PlacementAnchorRef {
+export function useViewAnchor(options: UseViewAnchorOptions): ViewAnchorRef {
   return useAnchorRef(
     options,
     [
       options.visible,
       options.publish,
-      options.guardDisplayNone,
+      options.treatZeroAreaAsHidden,
       options.followScroll,
       options.followGeometry,
+      options.holdSelector,
+      options.dedupe,
       ...(options.deps ?? []),
     ],
-    placementAdapter,
+    viewAdapter,
   )
 }
-
-export type { Bounds }

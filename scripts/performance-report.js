@@ -352,9 +352,8 @@ async function runSampleIn(temporary) {
         await Promise.all(
           [
             ['core/createViewAnchor', 'src/index.ts', 'createViewAnchor'],
-            ['core/createPlacementAnchor', 'src/index.ts', 'createPlacementAnchor'],
             ['core/measurePlacement', 'src/index.ts', 'measurePlacement'],
-            ['core/createSizeAdvertiser', 'src/index.ts', 'createSizeAdvertiser'],
+            ['core/createSizeAnchor', 'src/index.ts', 'createSizeAnchor'],
             ['protocol/decodeGeometryWireValue', 'src/protocol.ts', 'decodeGeometryWireValue'],
             [
               'protocol/createGeometrySequenceGuard',
@@ -373,7 +372,6 @@ async function runSampleIn(temporary) {
               'createSizeMessagePublisher',
             ],
             ['react/useViewAnchor', 'src/react.ts', 'useViewAnchor'],
-            ['react/usePlacementAnchor', 'src/react.ts', 'usePlacementAnchor'],
           ].map(async ([label, entry, name]) => [label, await exportSize(entry, name)]),
         ),
       ),

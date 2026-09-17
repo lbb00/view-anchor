@@ -6,19 +6,16 @@ import { GEOMETRY_PROTOCOL_VERSION } from '../src/protocol-types.js'
 import { createGeometryBatcher } from '../src/protocol-publisher.js'
 import type {
   GeometryBatcher,
-  GeometryBatchSend,
+  GeometryBatchSender,
   GeometryBatcherOptions,
 } from '../src/protocol-publisher.js'
 
 // ── onError contract during a reentrant dispose() ─────────────────────────
 //
 // GeometryBatcherOptions.onError must observe every batch-delivery error,
-// including one raised by a send() that disposes the batcher before
-// throwing. dispose() drops the instance's long-lived `options` reference
-// (so a retained, disposed handle does not keep it reachable), so flush()
-// must keep reporting to the options object that was live when it started,
-// read dynamically at the moment of the error rather than cached ahead of
-// send().
+// including one raised by a send() that disposes the batcher before throwing.
+// flush() reads the options object it had when it started, not a cached copy,
+// so it reports to the correct object even after dispose() clears the reference.
 
 function sizeMessage(anchorId: string) {
   return {
@@ -42,7 +39,7 @@ describe('createGeometryBatcher onError contract', () => {
       },
     }
     const failure = new Error('send failed')
-    const send: GeometryBatchSend = () => {
+    const send: GeometryBatchSender = () => {
       batcher.dispose()
       throw failure
     }
@@ -59,7 +56,7 @@ describe('createGeometryBatcher onError contract', () => {
     const replacement = vi.fn()
     const options: GeometryBatcherOptions = { onError: original }
     const failure = new Error('send failed')
-    const send: GeometryBatchSend = () => {
+    const send: GeometryBatchSender = () => {
       options.onError = replacement
       throw failure
     }
@@ -83,7 +80,7 @@ describe('createGeometryBatcher onError contract', () => {
       },
       set() {},
     })
-    const send: GeometryBatchSend = () => true
+    const send: GeometryBatchSender = () => true
     const batcher = createGeometryBatcher(send, options)
     batcher.publish(sizeMessage('a'))
 
@@ -94,16 +91,13 @@ describe('createGeometryBatcher onError contract', () => {
 
 // ── Retained-handle memory audit ──────────────────────────────────────────
 //
-// A caller that keeps a disposed handle around (e.g. stored in a ref for
-// later reuse) must not keep the anchor's target element, publish/send
-// callback, or last-published payload reachable through it. Each factory
-// closes over these as plain `let` bindings, so `dispose()` must actively
-// drop them — merely flipping a `disposed` flag leaves the closures (and
-// whatever they captured) reachable for the handle's lifetime.
+// A disposed handle must not keep the anchor's target element, publish/send
+// callback, or last-published payload reachable. Each factory closes over
+// these as `let` bindings, so dispose() must actively clear them — flipping
+// only a `disposed` flag leaves the closures reachable for the handle's lifetime.
 //
-// This runs the actual source through rolldown in a fresh `node --expose-gc`
-// process (a jsdom/vitest process is not itself GC-inspectable) and asserts
-// via WeakRef that everything but the handle becomes collectible.
+// Runs the actual source through rolldown in a fresh `node --expose-gc`
+// process and asserts via WeakRef that everything but the handle is collectible.
 
 // Vitest's import.meta.url is not a plain file:// URL, so anchor on the
 // working directory the `test` script always runs from (repo root).
@@ -126,9 +120,8 @@ async function load(entry) {
 }
 
 const core = await load('src/view-anchor.ts')
-const size = await load('src/size-advertiser.ts')
+const size = await load('src/size-anchor.ts')
 const protocol = await load('src/protocol.ts')
-const measureLoop = await load('src/measure-loop.ts')
 
 class FakeResizeObserver {
   static instances = []
@@ -142,8 +135,8 @@ class FakeResizeObserver {
 globalThis.window = { addEventListener() {}, removeEventListener() {} }
 globalThis.ResizeObserver = FakeResizeObserver
 
-// Stored rather than fired immediately, so measure-loop cases can drive
-// frame() deterministically instead of racing a real animation frame.
+// Stored rather than fired immediately, so size anchor cases can drive
+// their frame callback deterministically instead of racing a real animation frame.
 let pendingRaf = null
 globalThis.requestAnimationFrame = (cb) => {
   pendingRaf = cb
@@ -185,10 +178,10 @@ function basicCase(name) {
   const publish = () => (payload.data.length > 0)
   const handle =
     name === 'view'
-      ? core.createViewAnchor(target, { present: true, publish })
+      ? core.createViewAnchor(target, { visible: true, publish })
       : name === 'placement'
-        ? core.createPlacementAnchor(target, { visible: true, publish })
-        : size.createSizeAdvertiser(target, { axis: 'block', publish })
+        ? core.createViewAnchor(target, { visible: true, publish })
+        : size.createSizeAnchor(target, { axis: 'block', publish })
   handle.dispose()
   retainedHandles.push(handle)
   refs.push({ name: name + '-basic-payload', ref: payloadRef })
@@ -217,8 +210,8 @@ function resurrectionCase(name, mode) {
   }
   const handle =
     name === 'view'
-      ? core.createViewAnchor(target, { present: true, publish })
-      : core.createPlacementAnchor(target, { visible: true, publish })
+      ? core.createViewAnchor(target, { visible: true, publish })
+      : core.createViewAnchor(target, { visible: true, publish })
   const firstRef = new WeakRef(capturedFirst)
   capturedFirst = null
   const observer = FakeResizeObserver.instances[0]
@@ -276,7 +269,7 @@ function f1BigObjectCase() {
   refs.push({ name: 'f1-error-payload-after-report', ref: errorPayloadRef })
 }
 
-// ── size advertiser: a ResizeObserver callback queued before disconnect()
+// ── size anchor: a ResizeObserver callback queued before disconnect()
 //    can still fire once more; it must not resurrect \`latest\`. ──────────
 function sizeLateCallbackCase() {
   FakeResizeObserver.instances = []
@@ -286,7 +279,7 @@ function sizeLateCallbackCase() {
   const secondBoxRef = new WeakRef(secondBox)
   const target = movingTarget()
   const publish = () => true
-  const handle = size.createSizeAdvertiser(target, { axis: 'block', publish })
+  const handle = size.createSizeAnchor(target, { axis: 'block', publish })
   const observer = FakeResizeObserver.instances[0]
   const lateCallback = observer.cb
   lateCallback([{ borderBoxSize: [firstBox] }], observer)
@@ -298,140 +291,35 @@ function sizeLateCallbackCase() {
   refs.push({ name: 'size-late-callback-second-box', ref: secondBoxRef })
 }
 
-// ── measure-loop: objects closed over by produce/same/sink must not
-//    outlive dispose(), even without any reentrancy. ─────────────────────
-function measureLoopCaptureCase() {
-  const producePayload = bigPayload()
-  const producePayloadRef = new WeakRef(producePayload)
-  const samePayload = bigPayload()
-  const samePayloadRef = new WeakRef(samePayload)
-  const sinkPayload = bigPayload()
-  const sinkPayloadRef = new WeakRef(sinkPayload)
-  const produce = () => {
-    void producePayload
-    return null
-  }
-  const same = () => {
-    void samePayload
+// ── size anchor: a publish() that reentrantly disposes and then
+//    declines or throws must still release the callback and the box. ────
+function sizeReentrantDisposeCase(mode) {
+  FakeResizeObserver.instances = []
+  const payload = bigPayload()
+  const payloadRef = new WeakRef(payload)
+  const secondBox = { blockSize: 30, inlineSize: 40 }
+  const secondBoxRef = new WeakRef(secondBox)
+  let calls = 0
+  const publish = () => {
+    calls++
+    if (calls === 1) return payload.data.length > 0
+    handle.dispose()
+    if (mode === 'throw') throw new Error('publish failure')
     return false
   }
-  const sink = () => {
-    void sinkPayload
-    return true
-  }
-  const loop = measureLoop.createMeasureLoop({ produce, same, sink })
-  loop.dispose()
-  retainedHandles.push(loop)
-  refs.push({ name: 'measure-loop-capture-produce-payload', ref: producePayloadRef })
-  refs.push({ name: 'measure-loop-capture-same-payload', ref: samePayloadRef })
-  refs.push({ name: 'measure-loop-capture-sink-payload', ref: sinkPayloadRef })
-}
-
-// ── measure-loop: produce() disposing synchronously must stop frame()'s
-//    subsequent deliver() call from writing \`last\`. ─────────────────────
-function measureLoopProduceDisposeCase() {
-  const bigObject = bigPayload()
-  const bigRef = new WeakRef(bigObject)
-  let loop
-  const produce = () => {
-    loop.dispose()
-    return bigObject
-  }
-  const same = () => false
-  const sink = () => true
-  loop = measureLoop.createMeasureLoop({ produce, same, sink })
-  loop.setActive(true)
-  loop.schedule()
+  const handle = size.createSizeAnchor(movingTarget(), { axis: 'block', publish })
+  const observer = FakeResizeObserver.instances[0]
+  observer.cb([{ borderBoxSize: [{ blockSize: 10, inlineSize: 20 }] }], observer)
   runPendingRaf()
-  retainedHandles.push(loop)
-  refs.push({ name: 'measure-loop-produce-dispose-value', ref: bigRef })
-}
-
-// ── measure-loop: same() disposing synchronously must stop frame()'s
-//    subsequent deliver() call from writing \`last\`. ─────────────────────
-function measureLoopSameDisposeCase() {
-  const primer = { tag: 'primer' }
-  const bigObject = bigPayload()
-  const bigRef = new WeakRef(bigObject)
-  let loop
-  let produceCall = 0
-  const produce = () => {
-    produceCall++
-    return produceCall === 1 ? primer : bigObject
-  }
-  const same = () => {
-    loop.dispose()
-    return false
-  }
-  const sink = () => true
-  loop = measureLoop.createMeasureLoop({ produce, same, sink })
-  loop.setActive(true)
-  loop.schedule()
-  runPendingRaf() // delivers \`primer\`, sets last = primer
-  loop.schedule()
-  runPendingRaf() // produce() returns bigObject; same() reentrantly disposes
-  retainedHandles.push(loop)
-  refs.push({ name: 'measure-loop-same-dispose-value', ref: bigRef })
-}
-
-// ── measure-loop: sink() reentrantly disposing and then rejecting must not
-//    resurrect the previously delivered value into \`last\`. ─────────────
-function measureLoopSinkRejectDisposeCase() {
-  const primer = bigPayload()
-  const primerRef = new WeakRef(primer)
-  const nextValue = { tag: 'next-reject' }
-  let loop
-  let produceCall = 0
-  const produce = () => {
-    produceCall++
-    return produceCall === 1 ? primer : nextValue
-  }
-  const same = () => false
-  const sink = (value) => {
-    if (value === primer) return true
-    loop.dispose()
-    return false
-  }
-  loop = measureLoop.createMeasureLoop({ produce, same, sink })
-  loop.setActive(true)
-  loop.schedule()
-  runPendingRaf()
-  loop.schedule()
-  runPendingRaf()
-  retainedHandles.push(loop)
-  refs.push({ name: 'measure-loop-sink-reject-previous-value', ref: primerRef })
-}
-
-// ── measure-loop: sink() reentrantly disposing and then throwing must not
-//    resurrect the previously delivered value into \`last\`. ─────────────
-function measureLoopSinkThrowDisposeCase() {
-  const primer = bigPayload()
-  const primerRef = new WeakRef(primer)
-  const nextValue = { tag: 'next-throw' }
-  let loop
-  let produceCall = 0
-  const produce = () => {
-    produceCall++
-    return produceCall === 1 ? primer : nextValue
-  }
-  const same = () => false
-  const sink = (value) => {
-    if (value === primer) return true
-    loop.dispose()
-    throw new Error('sink failure')
-  }
-  loop = measureLoop.createMeasureLoop({ produce, same, sink })
-  loop.setActive(true)
-  loop.schedule()
-  runPendingRaf()
-  loop.schedule()
+  observer.cb([{ borderBoxSize: [secondBox] }], observer)
   try {
     runPendingRaf()
   } catch {
-    // Expected: sink() intentionally throws after disposing.
+    // Expected: the second publish() intentionally throws after disposing.
   }
-  retainedHandles.push(loop)
-  refs.push({ name: 'measure-loop-sink-throw-previous-value', ref: primerRef })
+  retainedHandles.push(handle)
+  refs.push({ name: 'size-reentrant-' + mode + '-publish-payload', ref: payloadRef })
+  refs.push({ name: 'size-reentrant-' + mode + '-second-box', ref: secondBoxRef })
 }
 
 basicCase('view')
@@ -444,11 +332,8 @@ resurrectionCase('placement', 'throw')
 batcherCase()
 f1BigObjectCase()
 sizeLateCallbackCase()
-measureLoopCaptureCase()
-measureLoopProduceDisposeCase()
-measureLoopSameDisposeCase()
-measureLoopSinkRejectDisposeCase()
-measureLoopSinkThrowDisposeCase()
+sizeReentrantDisposeCase('reject')
+sizeReentrantDisposeCase('throw')
 
 async function collect() {
   for (let round = 0; round < 3; round++) {
@@ -494,10 +379,10 @@ function runAudit(): AuditResult {
 describe('disposed handle retention (real GC, separate process)', () => {
   it('drops target, publish/send, onError, and last-published references once dispose() runs, even with the handle (and, where relevant, a late callback) retained', () => {
     const audit = runAudit()
-    // 15 scenarios; sizeLateCallbackCase retains both the handle and a late
+    // 12 scenarios; sizeLateCallbackCase retains both the handle and a late
     // callback reference, so the handle count is one higher than the case count.
-    expect(audit.retainedHandleCount).toBe(16)
-    expect(audit.result).toHaveLength(26)
+    expect(audit.retainedHandleCount).toBe(13)
+    expect(audit.result).toHaveLength(23)
     const retained = audit.result.filter((r) => r.retained).map((r) => r.name)
     expect(retained).toEqual([])
   }, 30_000)

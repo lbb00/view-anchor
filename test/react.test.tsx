@@ -1,19 +1,27 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, act } from '@testing-library/react'
 import { StrictMode, useCallback, useEffect, useRef } from 'react'
-import {
-  useViewAnchor,
-  usePlacementAnchor,
-  type UsePlacementAnchorOptions,
-  type UseViewAnchorOptions,
-  type ViewAnchorRef,
-} from '../src/react.js'
+import { useViewAnchor, type UseViewAnchorOptions, type ViewAnchorRef } from '../src/react.js'
+import type { Placement } from '../src/types.js'
+
+// React 18 is the default install; the cleanup-replay suite below overrides
+// the version the adapter sees to 19 so the ref-cleanup path is also covered.
+const reactVersion = vi.hoisted(() => ({ current: '' }))
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>()
+  reactVersion.current = actual.version
+  return {
+    ...actual,
+    get version() {
+      return reactVersion.current
+    },
+  }
+})
 
 // ── ResizeObserver stub ──────────────────────────────────────────────
-// The React adapter is a thin wrapper over `createViewAnchor`, so behaviour
-// is observed through the injected `publish` spy + the FakeResizeObserver.
-// The core publishes SYNCHRONOUSLY (no RAF defer), so a fired observer tick
-// publishes immediately — there is nothing to flush.
+// Behaviour is observed through the injected `publish` spy and FakeResizeObserver.
+// The core publishes synchronously (no RAF defer), so a fired observer tick
+// publishes immediately — nothing to flush.
 
 class FakeResizeObserver {
   static instances: FakeResizeObserver[] = []
@@ -46,9 +54,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-/** Assert an observer exists, then return it — so a skeleton no-op (no
- *  observer installed) fails as a clear behavioural assertion rather than
- *  a TypeError on a later `.fire()`. */
+/** Assert an observer exists, then return it — so a missing observer
+ *  surfaces as a clear assertion failure instead of a TypeError on `.fire()`. */
 function firstObserver(): FakeResizeObserver {
   expect(FakeResizeObserver.instances.length).toBeGreaterThanOrEqual(1)
   return FakeResizeObserver.instances[0]!
@@ -59,9 +66,8 @@ function lastObserver(): FakeResizeObserver {
   return FakeResizeObserver.instances.at(-1)!
 }
 
-// A real <div> rendered by React, but with a stubbed getBoundingClientRect.
-// We stub on the element React hands us via a ref so the rect is
-// deterministic in jsdom (which always returns zeros otherwise).
+// A real <div> rendered by React, with a stubbed getBoundingClientRect.
+// Stubbing via a ref ensures the rect is deterministic in jsdom (which returns zeros).
 function stubRect(el: HTMLElement, rect: { x: number; y: number; w: number; h: number }): void {
   vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
     x: rect.x,
@@ -88,19 +94,15 @@ function Anchored(props: {
   const anchorRef = useViewAnchor(options)
   const elRef = useRef<HTMLDivElement | null>(null)
   const rectRef = useRef(rect)
-  // Sync the latest rect post-commit instead of writing the ref during render
-  // (react/refs). The stub is only read inside `setRef` when React hands
-  // us a *new* element, which always happens after commit, so the stub timing
-  // is identical to the render-time write.
+  // Sync the latest rect post-commit; the stub is only read inside `setRef`
+  // when React attaches a new element, which always happens after commit.
   useEffect(() => {
     rectRef.current = rect
   })
 
-  // Stable ref so a rerender doesn't tear down + re-create the anchor. An
-  // unstable ref function makes React call ref(null)→ref(el) every render,
-  // which would re-create the anchor and double-publish. Real consumers pass
-  // the stable `anchorRef` directly; this harness only wraps it to stub the
-  // element's rect for jsdom.
+  // Stable ref prevents a rerender from tearing down + re-creating the anchor.
+  // An unstable ref function would cause React to call ref(null)→ref(el) every
+  // render, re-creating the anchor and double-publishing.
   const setRef = useCallback(
     (el: HTMLDivElement | null): void => {
       if (el && elRef.current !== el) {
@@ -117,45 +119,43 @@ function Anchored(props: {
 }
 
 describe('useViewAnchor: ref attach', () => {
-  it('present=true: publishes the element rect once on mount', () => {
+  it('visible=true: publishes the element Placement once on mount', () => {
     const publish = vi.fn()
     act(() => {
       render(
-        <Anchored options={{ present: true, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />,
+        <Anchored options={{ visible: true, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />,
       )
     })
 
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenCalledWith({
-      x: 11,
-      y: 22,
-      width: 333,
-      height: 444,
+      visible: true,
+      bounds: { x: 11, y: 22, width: 333, height: 444 },
     })
     expect(FakeResizeObserver.instances).toHaveLength(1)
   })
 
-  it('present=false: publishes zero on mount and does not observe', () => {
+  it('visible=false: publishes { visible:false } on mount and does not observe', () => {
     const publish = vi.fn()
     act(() => {
       render(
-        <Anchored options={{ present: false, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />,
+        <Anchored options={{ visible: false, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />,
       )
     })
 
-    expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenCalledWith({ visible: false })
     expect(FakeResizeObserver.instances).toHaveLength(0)
   })
 })
 
 describe('useViewAnchor: ref null disposes', () => {
-  it('detaching the DOM node publishes ZERO once, disconnects the observer, and stops publishing', async () => {
+  it('detaching the DOM node publishes { visible:false } once, disconnects the observer, and stops publishing', async () => {
     const publish = vi.fn()
 
     function Host(props: { mounted: boolean }): React.JSX.Element {
       return (
         <Anchored
-          options={{ present: true, publish }}
+          options={{ visible: true, publish }}
           rect={{ x: 0, y: 0, w: 100, h: 100 }}
           mounted={props.mounted}
         />
@@ -170,88 +170,86 @@ describe('useViewAnchor: ref null disposes', () => {
     const ro = FakeResizeObserver.instances[0]!
     publish.mockClear()
 
-    // Unmount just the inner div (ref → null) via a prop-driven rerender; the
-    // hook stays alive (only the leaf <div> is gone, exercising the null-ref
-    // detach path).
+    // Unmount just the inner div (ref → null) via a prop-driven rerender;
+    // the hook stays alive, exercising the null-ref detach path.
     await act(async () => {
       rerender(<Host mounted={false} />)
       await Promise.resolve()
     })
     expect(ro.disconnected).toBe(true)
 
-    // A vanished anchor MUST publish exactly one ZERO so the host collapses the
-    // native view — detach publishing nothing would strand the native
-    // WebContentsView at its old bounds.
+    // A vanished anchor must publish exactly one { visible:false } so the
+    // host detaches the native view.
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenCalledWith({ visible: false })
     publish.mockClear()
 
-    // After the node is gone the anchor is inert: no further publishes.
+    // After the node is gone the anchor is inert.
     ro.fire()
     window.dispatchEvent(new Event('resize'))
     expect(publish).not.toHaveBeenCalled()
   })
 
-  it('unmounting while present becomes false in the same commit publishes one ZERO', async () => {
+  it('unmounting while visible becomes false in the same commit publishes one { visible:false }', async () => {
     const publish = vi.fn()
 
-    function Host(props: { mounted: boolean; present: boolean }): React.JSX.Element {
+    function Host(props: { mounted: boolean; visible: boolean }): React.JSX.Element {
       return (
         <Anchored
-          options={{ present: props.present, publish }}
+          options={{ visible: props.visible, publish }}
           rect={{ x: 0, y: 0, w: 100, h: 100 }}
           mounted={props.mounted}
         />
       )
     }
 
-    const { rerender } = render(<Host mounted={true} present={true} />)
+    const { rerender } = render(<Host mounted={true} visible={true} />)
     publish.mockClear()
 
     await act(async () => {
-      rerender(<Host mounted={false} present={false} />)
+      rerender(<Host mounted={false} visible={false} />)
       await Promise.resolve()
     })
 
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenCalledWith({ visible: false })
   })
 
   it('an unrelated rerender between collapse and detach does not re-collapse', async () => {
     const publish = vi.fn()
 
-    function Host(props: { mounted: boolean; present: boolean }): React.JSX.Element {
+    function Host(props: { mounted: boolean; visible: boolean }): React.JSX.Element {
       return (
         <Anchored
-          options={{ present: props.present, publish }}
+          options={{ visible: props.visible, publish }}
           rect={{ x: 0, y: 0, w: 100, h: 100 }}
           mounted={props.mounted}
         />
       )
     }
 
-    const { rerender } = render(<Host mounted={true} present={true} />)
+    const { rerender } = render(<Host mounted={true} visible={true} />)
     publish.mockClear()
 
-    // present flips to false: the deps-change effect applies the collapse.
+    // visible flips to false: the deps-change effect applies the collapse.
     act(() => {
-      rerender(<Host mounted={true} present={false} />)
+      rerender(<Host mounted={true} visible={false} />)
     })
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenCalledWith({ visible: false })
     publish.mockClear()
 
     // A rerender with the exact same option values: `applied` is a new array
     // reference every render even though nothing changed, so this must not
     // be mistaken for a fresh, uncollapsed state.
     act(() => {
-      rerender(<Host mounted={true} present={false} />)
+      rerender(<Host mounted={true} visible={false} />)
     })
     expect(publish).not.toHaveBeenCalled()
 
     // Unmounting now must not send the collapse a second time.
     await act(async () => {
-      rerender(<Host mounted={false} present={false} />)
+      rerender(<Host mounted={false} visible={false} />)
       await Promise.resolve()
     })
     expect(publish).not.toHaveBeenCalled()
@@ -259,25 +257,28 @@ describe('useViewAnchor: ref null disposes', () => {
 })
 
 describe('useViewAnchor: opts/deps change', () => {
-  it('present change false → true re-publishes the current rect', () => {
+  it('visible change false → true re-publishes the current placement', () => {
     const publish = vi.fn()
     const { rerender } = render(
-      <Anchored options={{ present: false, publish }} rect={{ x: 3, y: 4, w: 60, h: 70 }} />,
+      <Anchored options={{ visible: false, publish }} rect={{ x: 3, y: 4, w: 60, h: 70 }} />,
     )
     publish.mockClear()
 
     act(() => {
       rerender(
-        <Anchored options={{ present: true, publish }} rect={{ x: 3, y: 4, w: 60, h: 70 }} />,
+        <Anchored options={{ visible: true, publish }} rect={{ x: 3, y: 4, w: 60, h: 70 }} />,
       )
     })
 
-    expect(publish).toHaveBeenCalledWith({ x: 3, y: 4, width: 60, height: 70 })
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 3, y: 4, width: 60, height: 70 },
+    })
   })
 
-  it('deps change re-publishes even though present/publish are unchanged', () => {
+  it('deps change re-publishes even though visible/publish are unchanged', () => {
     const publish = vi.fn()
-    const base = { present: true, publish }
+    const base = { visible: true, publish }
     const { rerender } = render(
       <Anchored options={{ ...base, deps: ['tab-a'] }} rect={{ x: 1, y: 1, w: 200, h: 200 }} />,
     )
@@ -290,7 +291,10 @@ describe('useViewAnchor: opts/deps change', () => {
     })
 
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenLastCalledWith({ x: 1, y: 1, width: 200, height: 200 })
+    expect(publish).toHaveBeenLastCalledWith({
+      visible: true,
+      bounds: { x: 1, y: 1, width: 200, height: 200 },
+    })
   })
 
   it('publish identity change routes the re-apply emit to the new callback', () => {
@@ -298,35 +302,37 @@ describe('useViewAnchor: opts/deps change', () => {
     const second = vi.fn()
     const { rerender } = render(
       <Anchored
-        options={{ present: true, publish: first }}
+        options={{ visible: true, publish: first }}
         rect={{ x: 0, y: 0, w: 100, h: 100 }}
       />,
     )
     first.mockClear()
 
     // A publish-identity change re-applies through the core's `update`, which
-    // resets `lastPublished` and re-emits even on unchanged geometry — so the
-    // new callback (carrying e.g. a new zoom closure) is guaranteed to fire.
+    // resets `lastPublished` and re-emits even on unchanged geometry.
     act(() => {
       rerender(
         <Anchored
-          options={{ present: true, publish: second }}
+          options={{ visible: true, publish: second }}
           rect={{ x: 0, y: 0, w: 100, h: 100 }}
         />,
       )
     })
 
     expect(second).toHaveBeenCalledTimes(1)
-    expect(second).toHaveBeenCalledWith({ x: 0, y: 0, width: 100, height: 100 })
+    expect(second).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 0, y: 0, width: 100, height: 100 },
+    })
     expect(first).not.toHaveBeenCalled()
   })
 })
 
 describe('useViewAnchor: unmount disposes', () => {
-  it('unmounting the component publishes ZERO once, disconnects the observer, and never publishes after', async () => {
+  it('unmounting the component publishes { visible:false } once, disconnects the observer, and never publishes after', async () => {
     const publish = vi.fn()
     const { unmount } = render(
-      <Anchored options={{ present: true, publish }} rect={{ x: 0, y: 0, w: 100, h: 100 }} />,
+      <Anchored options={{ visible: true, publish }} rect={{ x: 0, y: 0, w: 100, h: 100 }} />,
     )
     const ro = firstObserver()
     publish.mockClear()
@@ -338,15 +344,71 @@ describe('useViewAnchor: unmount disposes', () => {
 
     expect(ro.disconnected).toBe(true)
 
-    // Unmount publishes exactly one ZERO to collapse the native view.
+    // Unmount publishes exactly one { visible:false }.
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenCalledWith({ visible: false })
     publish.mockClear()
 
     // After unmount the anchor is inert.
     ro.fire()
     window.dispatchEvent(new Event('resize'))
     expect(publish).not.toHaveBeenCalled()
+  })
+})
+
+describe('useViewAnchor: rejected hide', () => {
+  const unmountAndFlush = async (unmount: () => void): Promise<void> => {
+    await act(async () => {
+      unmount()
+      await Promise.resolve()
+    })
+  }
+
+  it('sends { visible:false } again on unmount when the mount-time hide was rejected', async () => {
+    const publish = vi.fn((p: Placement) => p.visible)
+    const { unmount } = render(
+      <Anchored options={{ visible: false, publish }} rect={{ x: 0, y: 0, w: 100, h: 100 }} />,
+    )
+    expect(publish).toHaveBeenCalledTimes(1)
+    publish.mockClear()
+
+    await unmountAndFlush(unmount)
+
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith({ visible: false })
+  })
+
+  it('sends { visible:false } again on unmount when hiding through props was rejected', async () => {
+    const publish = vi.fn((p: Placement) => p.visible)
+    const rect = { x: 0, y: 0, w: 100, h: 100 }
+    const { rerender, unmount } = render(
+      <Anchored options={{ visible: true, publish }} rect={rect} />,
+    )
+    rerender(<Anchored options={{ visible: false, publish }} rect={rect} />)
+    expect(publish).toHaveBeenLastCalledWith({ visible: false })
+    publish.mockClear()
+
+    await unmountAndFlush(unmount)
+
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith({ visible: false })
+  })
+
+  it('does not repeat an accepted hide on unmount, even after an earlier rejection', async () => {
+    const rejecting = vi.fn((p: Placement) => p.visible)
+    const accepting = vi.fn()
+    const rect = { x: 0, y: 0, w: 100, h: 100 }
+    const { rerender, unmount } = render(
+      <Anchored options={{ visible: false, publish: rejecting }} rect={rect} />,
+    )
+    // A new publish re-applies the hidden state and accepts it.
+    rerender(<Anchored options={{ visible: false, publish: accepting }} rect={rect} />)
+    expect(accepting).toHaveBeenCalledTimes(1)
+    accepting.mockClear()
+
+    await unmountAndFlush(unmount)
+
+    expect(accepting).not.toHaveBeenCalled()
   })
 })
 
@@ -359,11 +421,11 @@ describe('useViewAnchor: independent instances', () => {
       return (
         <>
           <Anchored
-            options={{ present: true, publish: publishA }}
+            options={{ visible: true, publish: publishA }}
             rect={{ x: 0, y: 0, w: 10, h: 10 }}
           />
           <Anchored
-            options={{ present: true, publish: publishB }}
+            options={{ visible: true, publish: publishB }}
             rect={{ x: 100, y: 100, w: 20, h: 20 }}
           />
         </>
@@ -374,53 +436,56 @@ describe('useViewAnchor: independent instances', () => {
       render(<Pair />)
     })
 
-    expect(publishA).toHaveBeenCalledWith({ x: 0, y: 0, width: 10, height: 10 })
-    expect(publishB).toHaveBeenCalledWith({ x: 100, y: 100, width: 20, height: 20 })
+    expect(publishA).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 0, y: 0, width: 10, height: 10 },
+    })
+    expect(publishB).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 100, y: 100, width: 20, height: 20 },
+    })
     expect(FakeResizeObserver.instances).toHaveLength(2)
 
     publishA.mockClear()
     publishB.mockClear()
 
-    // Move A's element to a NEW rect (so its tick isn't deduped), then fire
-    // only A's observer → only A republishes; B is untouched (no cross-wiring).
+    // Move A's element to a new rect, then fire only A's observer → only A
+    // republishes; B is untouched.
     const aEl = FakeResizeObserver.instances[0]!.observed[0] as HTMLElement
     stubRect(aEl, { x: 1, y: 1, w: 30, h: 30 })
     FakeResizeObserver.instances[0]!.fire()
     expect(publishA).toHaveBeenCalledTimes(1)
-    expect(publishA).toHaveBeenCalledWith({ x: 1, y: 1, width: 30, height: 30 })
+    expect(publishA).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 1, y: 1, width: 30, height: 30 },
+    })
     expect(publishB).not.toHaveBeenCalled()
   })
 })
 
-// ── Remount with present transition ──────────────
+// ── Remount with visible transition ──────────────
 // Production coupling: the debug cell is *unmounted* when hidden and *remounted*
-// when shown, so the element's mount/unmount and `options.present` flip together
-// (present=false ⟺ unmounted, present=true ⟺ mounted). On "show", React commits
+// when shown, so the element's mount/unmount and `options.visible` flip together
+// (visible=false ⟺ unmounted, visible=true ⟺ mounted). On "show", React commits
 // the remounted element and fires the stable ref callback during the *commit*
 // phase — before the `useEffect` that syncs `optsRef.current = opts` has run.
 //
-// Regression this guards: when the adapter syncs `optsRef.current = opts` in a
-// post-commit `useEffect` (instead of during render), the ref callback that
-// re-creates the anchor on remount reads a STALE `optsRef.current.present`
-// (still `false` from the hidden round). It therefore calls
-// `createViewAnchor(el, { present:false })`, which publishes a spurious ZERO;
-// and the re-apply effect then sees the (present,publish) tuple as "unchanged"
-// (true→true vs the seeded mount value) and skips, so the real rect is never
-// emitted. Correct behaviour on show is: publish the real rect EXACTLY once —
-// no leading ZERO, no second publish.
+// When `optsRef.current` is synced in a post-commit effect instead of during
+// render, the ref callback on remount reads a stale `optsRef.current.visible`
+// (still `false`), calls `createViewAnchor(el, { visible:false })`, and emits
+// a spurious `{ visible:false }`. Correct behaviour on show: publish the real
+// Placement exactly once — no leading detach, no duplicate.
 
-describe('useViewAnchor — remount with present transition', () => {
-  it('show (remount + present false→true) publishes the real rect once, no ZERO, not twice', () => {
+describe('useViewAnchor — remount with visible transition', () => {
+  it('show (remount + visible false→true) publishes the real Placement once, no detach, not twice', () => {
     const publish = vi.fn()
 
-    // Host drives BOTH `mounted` and the `present` option from a single
+    // Host drives BOTH `mounted` and the `visible` option from a single
     // `shown` flag, mirroring the production coupling (hidden ⟺ unmounted).
-    // Both are passed as props and flipped via rerender inside `act` — never
-    // by reassigning an outer variable during render (react/globals).
     function Host(props: { shown: boolean }): React.JSX.Element {
       return (
         <Anchored
-          options={{ present: props.shown, publish }}
+          options={{ visible: props.shown, publish }}
           rect={{ x: 17, y: 29, w: 321, h: 654 }}
           mounted={props.shown}
         />
@@ -431,94 +496,76 @@ describe('useViewAnchor — remount with present transition', () => {
     act(() => {
       ;({ rerender } = render(<Host shown={true} />))
     })
-    // Initial mount published the real rect once; settle and clear so the
-    // assertions below measure only the show transition.
+    // Initial mount published once; clear before the show-transition assertions.
     publish.mockClear()
 
-    // Hide: element unmounts AND present flips to false. This is expected to
-    // emit one collapse ZERO (detach path) — not the focus of this test.
+    // Hide: element unmounts AND visible flips to false.
     act(() => {
       rerender(<Host shown={false} />)
     })
     publish.mockClear()
 
-    // Show: element remounts AND present flips back to true. The remounted
-    // element's stubbed rect must be published exactly once, with no spurious
-    // ZERO and no duplicate publish.
+    // Show: element remounts AND visible flips back to true. Must publish
+    // the stubbed rect exactly once, no spurious detach, no duplicate.
     act(() => {
       rerender(<Host shown={true} />)
     })
 
-    expect(publish).not.toHaveBeenCalledWith({
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-    })
+    expect(publish).not.toHaveBeenCalledWith({ visible: false })
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenCalledWith({
-      x: 17,
-      y: 29,
-      width: 321,
-      height: 654,
+      visible: true,
+      bounds: { x: 17, y: 29, width: 321, height: 654 },
     })
   })
 })
 
-// ── StrictMode resilience (regression lock) ─────────────────────────
-// Not a new contract — these lock the *intended* behaviour against React's
-// StrictMode, which in dev double-fires every effect's setup/cleanup
-// (mount → setup → cleanup → setup) to surface unsafe lifecycle code. The
-// invariant these guard is the only one a consumer can see: after a real or
-// StrictMode-simulated mount, there is exactly one live anchor that (a) has
-// published its rect once, (b) still follows resizes, and (c) emits exactly
-// one ZERO when its element detaches.
+// ── StrictMode resilience ─────────────────────────────────────────────
+// These lock the intended behaviour against React's StrictMode, which in dev
+// double-fires every effect's setup/cleanup to surface unsafe lifecycle code.
+// Invariant: after a real or StrictMode-simulated mount, exactly one live
+// anchor has (a) published its Placement once, (b) still follows resizes, and
+// (c) emits exactly one `{ visible:false }` when its element detaches.
 
 describe('useViewAnchor — StrictMode resilience', () => {
-  it('mount under StrictMode publishes the real rect exactly once with one live observer', () => {
-    // Regression: a missing ref-guard / non-idempotent setup would let
-    // StrictMode's attach→detach→re-attach double-publish the mount rect and
-    // leave two live FakeResizeObserver connections (the first one leaked).
+  it('mount under StrictMode publishes the real Placement exactly once with one live observer', () => {
+    // A non-idempotent setup would let StrictMode's attach→detach→re-attach
+    // double-publish the mount Placement and leave two live observer connections.
     const publish = vi.fn()
     act(() => {
       render(
         <StrictMode>
-          <Anchored options={{ present: true, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />
+          <Anchored options={{ visible: true, publish }} rect={{ x: 11, y: 22, w: 333, h: 444 }} />
         </StrictMode>,
       )
     })
 
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenCalledWith({
-      x: 11,
-      y: 22,
-      width: 333,
-      height: 444,
+      visible: true,
+      bounds: { x: 11, y: 22, width: 333, height: 444 },
     })
-    // StrictMode may *create* extra observers during its throwaway pass, but
-    // only one may remain connected; the rest must be disconnected.
+    // StrictMode may create extra observers during its throwaway pass, but
+    // only one may remain connected.
     const live = FakeResizeObserver.instances.filter((o) => !o.disconnected)
     expect(live).toHaveLength(1)
   })
 
   it('after StrictMode mount settles, a resize still publishes once (anchor survived remount)', () => {
-    // Regression: StrictMode's simulated unmount/remount must leave a *working*
-    // anchor. If the surviving handle pointed at a disposed core (or a stale
-    // observer), the post-mount resize would publish zero times — the native
-    // view would freeze and never follow layout after StrictMode's remount.
+    // StrictMode's simulated unmount/remount must leave a working anchor.
+    // If the surviving handle pointed at a disposed core or a stale observer,
+    // the post-mount resize would publish zero times.
     const publish = vi.fn()
     act(() => {
       render(
         <StrictMode>
-          <Anchored options={{ present: true, publish }} rect={{ x: 5, y: 6, w: 70, h: 80 }} />
+          <Anchored options={{ visible: true, publish }} rect={{ x: 5, y: 6, w: 70, h: 80 }} />
         </StrictMode>,
       )
     })
     publish.mockClear()
 
-    // The live anchor is wired to the *last* observer created during mount.
-    // Move its element to a new rect so the tick isn't deduped, then fire it:
-    // a surviving, working anchor re-publishes the current rect synchronously.
+    // The live anchor is wired to the last observer created during mount.
     act(() => {
       const liveObserver = lastObserver()
       const liveEl = liveObserver.observed[0] as HTMLElement
@@ -527,20 +574,21 @@ describe('useViewAnchor — StrictMode resilience', () => {
     })
 
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenCalledWith({ x: 9, y: 9, width: 71, height: 81 })
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 9, y: 9, width: 71, height: 81 },
+    })
   })
 
-  it('detach under StrictMode publishes ZERO exactly once (contract 9 not amplified)', async () => {
-    // Regression: StrictMode's extra detach/reattach must NOT multiply the
-    // single collapse ZERO. A non-idempotent collapse path would emit ZERO
-    // twice (once per simulated unmount), making the host collapse/flicker the
-    // native WebContentsView more than once on a single real detach.
+  it('detach under StrictMode publishes { visible:false } exactly once (contract 9 not amplified)', async () => {
+    // StrictMode's extra detach/reattach must not multiply the single collapse.
+    // A non-idempotent collapse path would emit the detach twice.
     const publish = vi.fn()
 
     function Host(props: { mounted: boolean }): React.JSX.Element {
       return (
         <Anchored
-          options={{ present: true, publish }}
+          options={{ visible: true, publish }}
           rect={{ x: 0, y: 0, w: 100, h: 100 }}
           mounted={props.mounted}
         />
@@ -568,22 +616,31 @@ describe('useViewAnchor — StrictMode resilience', () => {
     })
 
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenCalledWith({ visible: false })
   })
 })
 
 // React 19 invokes the cleanup returned from a callback ref during its
 // development replay, then attaches the same element again in the same turn.
-// That replay is not a real disappearance: publishing ZERO would visibly
-// detach the native view and creating a second observer would leak work.
+// Publishing a detach during replay would visibly hide the native view;
+// creating a second observer would leak work.
 describe('useViewAnchor — callback-ref cleanup replay', () => {
+  let installedVersion = ''
+  beforeEach(() => {
+    installedVersion = reactVersion.current
+    reactVersion.current = '19.0.0'
+  })
+  afterEach(() => {
+    reactVersion.current = installedVersion
+  })
+
   it('coalesces same-turn cleanup → reattach, but collapses a real cleanup', async () => {
     const publish = vi.fn()
     let ref!: ViewAnchorRef
 
     function Capture(): null {
       // oxlint-disable-next-line react/globals -- test-only callback ref capture
-      ref = useViewAnchor({ present: true, publish })
+      ref = useViewAnchor({ visible: true, publish })
       return null
     }
 
@@ -608,7 +665,7 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
       await Promise.resolve()
     })
 
-    expect(publish).not.toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).not.toHaveBeenCalledWith({ visible: false })
     expect(publish).not.toHaveBeenCalled()
     expect(FakeResizeObserver.instances.filter((item) => !item.disconnected)).toEqual([observer])
 
@@ -622,20 +679,20 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
     })
 
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenCalledWith({ visible: false })
     expect(observer.disconnected).toBe(true)
   })
 
   it('rethrows a real detach collapse failure after disposing its handle', () => {
     const failure = new Error('collapse failure')
-    const publish = vi.fn((bounds: { width: number; height: number }) => {
-      if (bounds.width === 0 && bounds.height === 0) throw failure
+    const publish = vi.fn((placement: Placement) => {
+      if (!placement.visible) throw failure
     })
     let ref!: ViewAnchorRef
 
     function Capture(props: { revision: number }): null {
       // oxlint-disable-next-line react/globals -- test-only callback ref capture
-      ref = useViewAnchor({ present: true, publish, deps: [props.revision] })
+      ref = useViewAnchor({ visible: true, publish, deps: [props.revision] })
       return null
     }
 
@@ -657,16 +714,16 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
       rerender(<Capture revision={1} />)
     })
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenLastCalledWith({ visible: false })
   })
 
-  it('replaces A with B without an intermediate ZERO after A cleanup', async () => {
+  it('replaces A with B without an intermediate detach after A cleanup', async () => {
     const publish = vi.fn()
     let ref!: ViewAnchorRef
 
     function Capture(): null {
       // oxlint-disable-next-line react/globals -- test-only callback ref capture
-      ref = useViewAnchor({ present: true, publish })
+      ref = useViewAnchor({ visible: true, publish })
       return null
     }
 
@@ -692,8 +749,11 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
     })
 
     expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenCalledWith({ x: 50, y: 60, width: 70, height: 80 })
-    expect(publish).not.toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 50, y: 60, width: 70, height: 80 },
+    })
+    expect(publish).not.toHaveBeenCalledWith({ visible: false })
     expect(observerA.disconnected).toBe(true)
     expect(lastObserver().disconnected).toBe(false)
 
@@ -704,18 +764,18 @@ describe('useViewAnchor — callback-ref cleanup replay', () => {
   })
 })
 
-describe('usePlacementAnchor', () => {
-  it('creates the explicit-visibility anchor, follows scroll, and re-applies deps', () => {
+describe('useViewAnchor — guard/scroll/geometry options', () => {
+  it('creates the anchor, follows scroll, and re-applies deps', () => {
     const publish = vi.fn()
-    let ref!: ReturnType<typeof usePlacementAnchor>
+    let ref!: ReturnType<typeof useViewAnchor>
 
-    function Capture(props: { options: UsePlacementAnchorOptions }): null {
+    function Capture(props: { options: UseViewAnchorOptions }): null {
       // oxlint-disable-next-line react/globals -- test-only callback ref capture
-      ref = usePlacementAnchor(props.options)
+      ref = useViewAnchor(props.options)
       return null
     }
 
-    const options: UsePlacementAnchorOptions = {
+    const options: UseViewAnchorOptions = {
       visible: true,
       publish,
       followScroll: true,
@@ -756,11 +816,11 @@ describe('usePlacementAnchor', () => {
 
   it('applies followScroll changes without requiring a manual deps entry', () => {
     const publish = vi.fn()
-    let ref!: ReturnType<typeof usePlacementAnchor>
+    let ref!: ReturnType<typeof useViewAnchor>
 
-    function Capture(props: { options: UsePlacementAnchorOptions }): null {
+    function Capture(props: { options: UseViewAnchorOptions }): null {
       // oxlint-disable-next-line react/globals -- test-only callback ref capture
-      ref = usePlacementAnchor(props.options)
+      ref = useViewAnchor(props.options)
       return null
     }
 
@@ -788,46 +848,165 @@ describe('usePlacementAnchor', () => {
     })
   })
 
-  it('an unrelated rerender between collapse and detach does not re-collapse', async () => {
+  it('holdSelector passed then omitted on rerender falls back to the default selector on the core (a later pointerdown on the default selector still opens frame following)', () => {
+    // A trivial "always return the same id" RAF stub can't distinguish a
+    // still-open frame following from a freshly re-opened one (the core only
+    // reschedules when its rafId is null), so this test needs a RAF stub
+    // that actually tracks pending frames and can be flushed to let the
+    // frame following close for real between the two pointerdown assertions.
+    class FakeRaf {
+      private cbs = new Map<number, FrameRequestCallback>()
+      private nextId = 1
+      request = vi.fn((cb: FrameRequestCallback): number => {
+        const id = this.nextId++
+        this.cbs.set(id, cb)
+        return id
+      })
+      cancel = vi.fn((id: number): void => {
+        this.cbs.delete(id)
+      })
+      flushFrame(ts = 0): void {
+        const pending = [...this.cbs.entries()]
+        this.cbs.clear()
+        for (const [, cb] of pending) cb(ts)
+      }
+    }
+    const raf = new FakeRaf()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      raf.request as unknown as typeof window.requestAnimationFrame,
+    )
+    vi.stubGlobal(
+      'cancelAnimationFrame',
+      raf.cancel as unknown as typeof window.cancelAnimationFrame,
+    )
     const publish = vi.fn()
-    let ref!: ReturnType<typeof usePlacementAnchor>
+    let ref!: ReturnType<typeof useViewAnchor>
 
-    function Capture(props: { options: UsePlacementAnchorOptions }): null {
+    function Capture(props: { options: UseViewAnchorOptions }): null {
       // oxlint-disable-next-line react/globals -- test-only callback ref capture
-      ref = usePlacementAnchor(props.options)
+      ref = useViewAnchor(props.options)
       return null
     }
 
-    const base: UsePlacementAnchorOptions = { visible: true, publish }
-    const { rerender } = render(<Capture options={base} />)
+    // A custom selector (not the default) distinguishes "falls back to the
+    // default" from "keeps the previous value" once holdSelector is omitted
+    // on rerender.
+    const withHoldSelector: UseViewAnchorOptions = {
+      visible: true,
+      publish,
+      followGeometry: true,
+      holdSelector: '.custom-handle',
+    }
+    const { rerender } = render(<Capture options={withHoldSelector} />)
     const el = document.createElement('div')
-    stubRect(el, { x: 1, y: 2, w: 30, h: 40 })
+    stubRect(el, { x: 0, y: 0, w: 10, h: 10 })
     act(() => {
       ref(el)
     })
+
+    const customHandle = document.createElement('div')
+    customHandle.className = 'custom-handle'
+    document.body.appendChild(customHandle)
+    const splitter = document.createElement('div')
+    splitter.setAttribute('role', 'separator')
+    document.body.appendChild(splitter)
+
+    customHandle.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(raf.request).toHaveBeenCalled()
+    // Release the hold, then flush two steady frames so frame following
+    // actually closes (STEADY_CLOSE_FRAMES) instead of staying scheduled —
+    // otherwise the splitter assertion below can't tell a real re-open from
+    // frame following that was already open.
+    window.dispatchEvent(new Event('pointerup'))
+    raf.flushFrame()
+    raf.flushFrame()
+    raf.request.mockClear()
+
+    // Every render applies a full configuration: an omitted option resets to
+    // its default. For holdSelector that default is the separator selector.
+    act(() => {
+      rerender(<Capture options={{ visible: true, publish, followGeometry: true }} />)
+    })
+
+    // The old custom selector no longer matches.
+    customHandle.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(raf.request).not.toHaveBeenCalled()
+
+    // The default separator selector now matches.
+    splitter.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(raf.request).toHaveBeenCalled()
+  })
+
+  it('holdSelector: null on the core disables frame following for a pointerdown on the default separator', () => {
+    const publish = vi.fn()
+    const raf = vi.fn(() => 1)
+    vi.stubGlobal('requestAnimationFrame', raf as unknown as typeof window.requestAnimationFrame)
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    let ref!: ReturnType<typeof useViewAnchor>
+
+    function Capture(props: { options: UseViewAnchorOptions }): null {
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
+      ref = useViewAnchor(props.options)
+      return null
+    }
+
+    const options: UseViewAnchorOptions = {
+      visible: true,
+      publish,
+      followGeometry: true,
+      holdSelector: null,
+    }
+    render(<Capture options={options} />)
+    const el = document.createElement('div')
+    stubRect(el, { x: 0, y: 0, w: 10, h: 10 })
+    act(() => {
+      ref(el)
+    })
+
+    const splitter = document.createElement('div')
+    splitter.setAttribute('role', 'separator')
+    document.body.appendChild(splitter)
+
+    splitter.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(raf).not.toHaveBeenCalled()
+  })
+})
+
+describe('useViewAnchor: dedupe option', () => {
+  it('omitting dedupe defaults to true: a same-rect tick is skipped', () => {
+    const publish = vi.fn()
+    act(() => {
+      render(
+        <Anchored options={{ visible: true, publish }} rect={{ x: 0, y: 0, w: 100, h: 100 }} />,
+      )
+    })
     publish.mockClear()
 
-    // visible flips to false: the deps-change effect applies the collapse.
+    firstObserver().fire()
+
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('dedupe: false publishes on every tick, even an unchanged rect', () => {
+    const publish = vi.fn()
     act(() => {
-      rerender(<Capture options={{ ...base, visible: false }} />)
+      render(
+        <Anchored
+          options={{ visible: true, publish, dedupe: false }}
+          rect={{ x: 0, y: 0, w: 100, h: 100 }}
+        />,
+      )
     })
-    expect(publish).toHaveBeenCalledTimes(1)
-    expect(publish).toHaveBeenLastCalledWith({ visible: false })
     publish.mockClear()
 
-    // A rerender with the exact same option values: `applied` is a new array
-    // reference every render even though nothing changed, so this must not
-    // be mistaken for a fresh, uncollapsed state.
-    act(() => {
-      rerender(<Capture options={{ ...base, visible: false }} />)
-    })
-    expect(publish).not.toHaveBeenCalled()
+    firstObserver().fire()
+    firstObserver().fire()
 
-    // Detaching now must not send the collapse a second time.
-    await act(async () => {
-      ref(null)
-      await Promise.resolve()
+    expect(publish).toHaveBeenCalledTimes(2)
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 0, y: 0, width: 100, height: 100 },
     })
-    expect(publish).not.toHaveBeenCalled()
   })
 })

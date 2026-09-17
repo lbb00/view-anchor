@@ -1,4 +1,4 @@
-import type { AdvertisedSize, Placement, Publisher } from './types.js'
+import type { SizeMeasurement, Placement, Publisher } from './types.js'
 import { watchAbort } from './abort.js'
 import {
   GEOMETRY_PROTOCOL_VERSION,
@@ -9,8 +9,8 @@ import {
   type SizeMessage,
 } from './protocol-types.js'
 
-export type GeometrySend = Publisher<GeometryMessage>
-export type GeometryBatchSend = Publisher<GeometryBatch>
+export type GeometryMessageSender = Publisher<GeometryMessage>
+export type GeometryBatchSender = Publisher<GeometryBatch>
 
 export interface GeometryBatcherOptions {
   /** Observes every batch-delivery error, including explicit flushes; it must not throw. */
@@ -41,7 +41,7 @@ export interface GeometryBatcher {
  */
 export function createPlacementMessagePublisher(
   address: GeometryAddress,
-  send: GeometrySend,
+  send: GeometryMessageSender,
 ): (placement: Placement) => boolean {
   let seq = 0
 
@@ -65,8 +65,8 @@ export function createPlacementMessagePublisher(
  */
 export function createSizeMessagePublisher(
   address: GeometryAddress,
-  send: GeometrySend,
-): (size: AdvertisedSize) => boolean {
+  send: GeometryMessageSender,
+): (size: SizeMeasurement) => boolean {
   let seq = 0
 
   return (size) => {
@@ -84,15 +84,13 @@ export function createSizeMessagePublisher(
 
 // Terminal-state stand-in for `send` so a retained, disposed batcher does not
 // keep the caller's transport closure (and whatever it captured) alive.
-const NOOP_SEND: GeometryBatchSend = () => false
+const NOOP_SEND: GeometryBatchSender = () => false
 
 /**
- * Coalesces same-task messages without adding a rendering-frame delay. It owns
- * no authorization policy: callers must associate addresses with trusted
- * sources before accepting a delivered batch.
+ * Coalesces same-task messages without adding a rendering-frame delay.
  */
 export function createGeometryBatcher(
-  send: GeometryBatchSend,
+  send: GeometryBatchSender,
   options: GeometryBatcherOptions = {},
 ): GeometryBatcher {
   /** State is indexed by anchor so upgrades and clear(anchor) are O(1). */
@@ -203,11 +201,7 @@ export function createGeometryBatcher(
     removeAbortListener = (): void => {}
     anchors.clear()
     pendingAnchors.clear()
-    // Callers may still mutate the original options object after
-    // construction (e.g. reassigning onError); flush() captures its own
-    // reference before send() runs, so an in-flight error report keeps
-    // reading that object even though dispose() drops the instance's
-    // long-lived reference here.
+    // Drop the long-lived reference; flush() captures its own before send() runs.
     options = {}
     send = NOOP_SEND
   }

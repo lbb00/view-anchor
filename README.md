@@ -7,43 +7,41 @@
 [![npm version](https://img.shields.io/npm/v/view-anchor)](https://www.npmjs.com/package/view-anchor)
 [![npm downloads](https://img.shields.io/npm/dm/view-anchor)](https://www.npmjs.com/package/view-anchor)
 [![License](https://img.shields.io/npm/l/view-anchor)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D24-339933)](https://nodejs.org/)
 
 [English](./README.md) · [简体中文](./README.zh-CN.md)
 
-> 🎮 **Live demo**: the [3D interactive demo](https://lbb00.github.io/view-anchor/) runs the real core in your browser. Drag the splitter, toggle the panel, and watch the native view follow.
+> 🎮 **Live demo**: [3D interactive demo](https://lbb00.github.io/view-anchor/) runs the real core in your browser. Drag the splitters, scroll the page, and click its buttons directly in the tilted scene: surface A follows its placeholder, and surface B reports its content height back so the page resizes its placeholder.
 
 ## The problem
 
-Some surfaces are positioned by application code rather than by CSS. They may be a canvas, a video overlay, an embedded document, or any other thing you can position from a rectangle. Your layout moves DOM elements, but it cannot move that external surface by itself.
+Some surfaces are positioned by application code rather than by CSS — a canvas, a video overlay, an embedded document, or anything you can position from a rectangle. DOM layout moves placeholder elements, but cannot move those external surfaces.
 
-Point `view-anchor` at a placeholder element. It measures the element on creation, on `ResizeObserver` notifications, and on window `resize`, then calls your `publish` function. Your function applies, stores, or sends that value using the mechanism your application already has.
+Point `view-anchor` at a placeholder element. It measures it on creation, on `ResizeObserver` notifications, and on window `resize`, then calls your `publish` function. Your function applies, stores, or sends that value however your application already does.
 
-The core has no dependency on a host runtime, React, or a layout library. It only uses `ResizeObserver`, `requestAnimationFrame`, and `getBoundingClientRect`. React support lives in a separate `view-anchor/react` entry.
+The core has no dependency on a host runtime, React, or a layout library, and uses only `ResizeObserver`, `requestAnimationFrame`, and `getBoundingClientRect`. React support lives in a separate `view-anchor/react` entry.
 
 ## What `publish` receives
 
-`publish` is not a built-in transport. It is a synchronous function that the library calls with one of these plain values:
+`publish` is a synchronous function that the library calls with one of these plain values:
 
-- `createViewAnchor` calls `publish(bounds)`, where `bounds` is `{ x, y, width, height }` in CSS pixels from `getBoundingClientRect()`. When `present` becomes `false`, it calls `publish({ x: 0, y: 0, width: 0, height: 0 })` once and stops observing.
-- `createPlacementAnchor` calls `publish({ visible: true, bounds })` while shown, or `publish({ visible: false })` while hidden. Use it when a visible zero-sized element differs from a hidden one.
-- `createSizeAdvertiser` calls `publish({ axis, extent })`, where `axis` is `block` (height) or `inline` (width), and `extent` is the rounded non-negative content size in CSS pixels.
+- `createViewAnchor` calls `publish({ visible: true, bounds })` while shown, where `bounds` is `{ x, y, width, height }` in CSS pixels from `getBoundingClientRect()`, or `publish({ visible: false })` while hidden. The explicit `visible` flag distinguishes a visible-but-zero-sized element from one that is hidden or unmounted.
+- `createSizeAnchor` calls `publish({ axis, extent })`, where `axis` is `block` (height) or `inline` (width), and `extent` is the target's rounded, non-negative border-box size on that axis in CSS pixels (padding and border included; content-box only where the browser does not report a border box).
 
-Return `false` only when the value was not accepted; a later measurement may retry it. Return `true` or nothing after accepting or queueing it.
+Return `false` only when the value was not accepted; a later measurement may retry it. Return `true` or nothing after accepting or queueing it. A hidden anchor measures nothing, so a rejected `{ visible: false }` is not retried on its own: call `update()` again to resend it. `useViewAnchor` does this for you on unmount.
 
-## Built for the hot path
+## Performance
 
-Geometry updates fire on every resize and, when following a drag, on every animation frame. The library keeps that work predictable:
+Geometry updates fire on every resize and, when following a drag, on every animation frame.
 
 - **Synchronous delivery.** Measurement and publish happen inside the same `ResizeObserver` callback. No timers, no extra frame of lag.
-- **Dedupe outgoing updates.** A rectangle identical to the last accepted one is not passed to `publish` again.
-- **Frame following only when needed.** `followGeometry` polls `requestAnimationFrame` during a scroll burst, a splitter drag, or an explicit `pulse()`, then closes itself once the rectangle settles. Idle cost is zero, and hidden or invalid targets are capped at 30 frames.
+- **Dedupe by default.** A `Placement` identical to the last accepted one is not passed to `publish` again; set `dedupe: false` to receive every measurement.
+- **Frame following on demand.** `followGeometry` polls `requestAnimationFrame` during a scroll burst, a splitter drag, or an explicit `pulse()`, then stops once the rectangle settles. Idle cost is zero; hidden or invalid targets are capped at 30 frames.
 - **O(1) generation changes.** In the protocol layer, moving an anchor to a new generation or clearing it does not touch other anchors.
-- **Latest-wins batching.** Messages queued in the same task are merged in a microtask. The newest placement and size for each anchor are sent separately.
+- **Latest-wins batching.** Messages queued in the same task are merged in a microtask; the newest placement and size for each anchor are sent separately.
 - **Release on disposal.** Disposed handles stop observing and release their target and callback references, even when the caller keeps the handle.
-- **Compact, tree-shakeable core.** Functions are separate exports with `sideEffects: false`; the complete core export is under 3 KB gzipped.
+- **Tree-shakeable core.** Functions are separate exports with `sideEffects: false`; the complete core export is under 3 KB gzipped.
 
-The [performance report](./docs/performance-report.md) contains the reproducible measurements and their environment. They are useful for comparing changes on the same machine, not for predicting browser layout, serialization, delivery, or your app's workload.
+See the [performance report](./docs/performance-report.md) for a comparison with 0.2.2 and export sizes.
 
 ## Installation
 
@@ -53,7 +51,7 @@ pnpm add view-anchor
 npm install view-anchor
 ```
 
-React is an optional peer dependency. Import the hooks from `view-anchor/react`. The root entry also re-exports `useViewAnchor` for compatibility with `v0.1.2`, so any app that imports `view-anchor` needs React installed. `view-anchor/protocol` does not.
+React is an optional peer dependency, needed only if you import from `view-anchor/react`. The root entry (`view-anchor`) and `view-anchor/protocol` have no React dependency and load without it installed.
 
 ## Usage
 
@@ -62,28 +60,33 @@ React is an optional peer dependency. Import the hooks from `view-anchor/react`.
 ```ts
 import { createViewAnchor } from 'view-anchor'
 
-const publish = (bounds) => {
-  applyBounds(bounds)
+const publish = (placement) => {
+  if (placement.visible) applyBounds(placement.bounds)
+  else hideSurface()
 }
 
 const handle = createViewAnchor(target, {
-  present: true,
+  visible: true,
   publish,
+  followScroll: true, // re-measure when any ancestor scrolls
+  followGeometry: true, // poll animation frames during scrolls / drags, stop when steady
+  treatZeroAreaAsHidden: true, // zero-area or display:none target → { visible: false }
+  holdSelector: '[role="separator"]', // default; pointerdown on a match keeps followGeometry open while held, null disables
+  dedupe: true, // default; set false to receive every measurement, even unchanged ones
 })
 
-handle.update({ present: true, publish }) // apply new options and publish right away
+handle.update({ visible: true, publish }) // apply new options and publish right away
+handle.pulse() // re-measure after a move no observer sees (e.g. a class toggle moved the target without resizing it); closes once steady
 handle.dispose() // stop observing; never publishes again
 ```
 
-Set `present: false` to collapse the surface. The core publishes a zero rectangle and stops observing. Your `publish` function decides whether that removes, hides, or retains the external surface.
+Set `visible: false` to collapse the surface. The core publishes `{ visible: false }` and stops observing. Your `publish` function decides whether that removes, hides, or retains the external surface.
 
-For ancestor scroll, transforms, or other position-only changes, use `createPlacementAnchor` with `followScroll` or `followGeometry` as needed.
-
-`createViewAnchor`, `createPlacementAnchor`, `createSizeAdvertiser`, and `createGeometryBatcher` accept `signal`. Aborting it is equivalent to `dispose()`; an already-aborted signal does not measure, publish, or install listeners.
+`createViewAnchor`, `createSizeAnchor`, and `createGeometryBatcher` accept `signal`. Aborting it is equivalent to `dispose()`; an already-aborted signal does not measure, publish, or install listeners.
 
 ```ts
 const controller = new AbortController()
-const handle = createViewAnchor(target, { present: true, publish, signal: controller.signal })
+const handle = createViewAnchor(target, { visible: true, publish, signal: controller.signal })
 
 controller.abort() // same cleanup as handle.dispose()
 ```
@@ -95,62 +98,44 @@ import { useViewAnchor } from 'view-anchor/react'
 
 function DebugPanel({ visible }: { visible: boolean }) {
   const ref = useViewAnchor({
-    present: visible,
-    publish: publishPanelBounds,
+    visible,
+    publish: publishPanelPlacement,
+    followScroll: true,
+    followGeometry: true,
   })
   // The external surface follows this placeholder. Hiding or unmounting it
-  // sends the collapsed value, without deciding how the surface is stored.
+  // sends { visible: false }, without deciding how the surface is stored.
   return <div ref={ref} className="h-full w-full" />
 }
 ```
 
-The hook survives React 18 and 19 StrictMode double-mounting without publishing stale frames.
-
-### Explicit visibility
-
-A zero rectangle cannot tell a hidden view from one that is visible but currently 0×0. When that distinction matters, use the `Placement` API. It publishes `{ visible: true, bounds }` or `{ visible: false }` and adds opt-in scroll and geometry following:
-
-```ts
-import { createPlacementAnchor } from 'view-anchor'
-
-const handle = createPlacementAnchor(target, {
-  visible: true,
-  publish(placement) {
-    applyPlacement(placement)
-  },
-  followScroll: true, // re-measure when any ancestor scrolls
-  followGeometry: true, // poll animation frames during scrolls / drags, stop when steady
-  guardDisplayNone: true, // zero-area or display:none target → { visible: false }
-})
-
-handle.pulse() // open a short frame-following window, e.g. during a CSS transition
-```
-
-The React version is `usePlacementAnchor` from `view-anchor/react`.
+The hook survives React 18 and 19 StrictMode double-mounting without publishing stale frames. It re-applies options on every update with the same reset semantics as `createViewAnchor` and `update()`: an omitted option resets to its default, not the previous value. An omitted `treatZeroAreaAsHidden`, `followScroll`, or `followGeometry` counts as `false`; an omitted `holdSelector` resets to `[role="separator"]`; an omitted `dedupe` resets to `true`. Pass `null` / `false` to turn `holdSelector` / `dedupe` off.
 
 ### Let content drive the size
 
-Sometimes the hosted surface's size should come from its own content, for example a toolbar rendered by downstream code. Run `createSizeAdvertiser` inside the hosted document. It reports the content size back so a DOM placeholder in the host can grow to match:
+Sometimes the hosted surface's size should come from its own content, for example a toolbar rendered by downstream code. Run `createSizeAnchor` inside the hosted document. It reports the content size back so a DOM placeholder in the host can grow to match:
 
 ```ts
-import { createSizeAdvertiser } from 'view-anchor'
+import { createSizeAnchor } from 'view-anchor'
 
-const handle = createSizeAdvertiser(contentWrapper, {
-  axis: 'block', // one axis per advertiser: block = height, inline = width
-  publish(size) {
-    updatePlaceholderSize(size)
-  },
+const publish = (size) => {
+  updatePlaceholderSize(size)
+}
+
+const handle = createSizeAnchor(contentWrapper, {
+  axis: 'block', // one axis per size anchor: block = height, inline = width
+  publish,
 })
 
-handle.update(publish) // swap the publish channel and report the current size again
+handle.update({ publish }) // apply new options and report the current size again; an omitted dedupe resets to true
 handle.dispose() // stop observing; never reports again
 ```
 
-> **Warning:** the target must shrink to fit its content on the owned axis. If the host sets that size instead, the two sides keep reacting to each other and never settle. See [docs/bidirectional-design.md](./docs/bidirectional-design.md).
+> The target must shrink to fit its content on the owned axis. If the host sets that size instead, the two sides keep reacting to each other and never settle. See [docs/bidirectional-design.md](./docs/bidirectional-design.md).
 
 ### Versioned transport across a boundary
 
-The core hands you plain `Bounds`, `Placement`, and `AdvertisedSize` values. If an application passes them through an asynchronous or untrusted channel, it usually needs validation and ordering. The optional `view-anchor/protocol` entry adds versioned message envelopes, bounded decoding, a per-anchor sequence guard that drops stale messages, and a microtask batcher:
+The core hands you plain `Bounds`, `Placement`, and `SizeMeasurement` values. If an application passes them through an asynchronous or untrusted channel, it usually needs validation and ordering. The optional `view-anchor/protocol` entry adds versioned message envelopes, bounded decoding, a per-anchor sequence guard that drops stale messages, and a microtask batcher:
 
 ```ts
 import {
@@ -173,45 +158,44 @@ if (decoded.ok) {
 }
 ```
 
-Two rules keep the ordering correct:
-
 - **Keep one publisher per `{ anchorId, generation }`.** The batcher and `createGeometrySequenceGuard` remember the highest sequence number for each message kind per anchor. A publisher rebuilt for the same address restarts at sequence 1 and its messages are dropped as stale. In React, hold it in `useMemo` or `useRef`. Bump `generation` when you really want a fresh start.
-- **A synchronous publisher returns `false` to say "not accepted".** The core then retries the same geometry on the next trigger. A batching publisher returns `true` once queued and owns any later retries.
+- **A synchronous publisher returns `false` to say "not accepted".** The core then retries the same geometry on the next trigger (a rejected `{ visible: false }` waits for the next `update()`). A batching publisher returns `true` once queued and owns any later retries.
 
 The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 ## API
 
-| Export                                                                      | Kind              | Purpose                                                                                                                       |
-| --------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `createViewAnchor(target, opts)`                                            | function          | Measure a DOM element and call `publish({ x, y, width, height })`. A zero rect means collapsed.                               |
-| `createPlacementAnchor(target, opts)`                                       | function          | Same core with explicit `Placement` visibility, opt-in `followScroll` / `followGeometry` / `guardDisplayNone`, and `pulse()`. |
-| `measurePlacement(target)`                                                  | function          | Pure measurement: wraps the target rect as `{ visible: true, bounds }`.                                                       |
-| `createSizeAdvertiser(target, opts)`                                        | function          | Call `publish({ axis, extent })` with one content-size axis.                                                                  |
-| `useViewAnchor(opts)` from `view-anchor/react`                              | hook              | Returns a ref callback for a placeholder element.                                                                             |
-| `usePlacementAnchor(opts)` from `view-anchor/react`                         | hook              | React adapter for the `Placement` API, including `followScroll` and `followGeometry`.                                         |
-| `Bounds`                                                                    | type              | `{ x, y, width, height }` in CSS pixels.                                                                                      |
-| `Placement`                                                                 | type              | `{ visible: true; bounds } \| { visible: false }`.                                                                            |
-| `ViewAnchorOptions` / `ViewAnchorHandle`                                    | type              | Options and handle for `createViewAnchor`.                                                                                    |
-| `PlacementAnchorOptions` / `PlacementAnchorHandle`                          | type              | Options and handle for `createPlacementAnchor`.                                                                               |
-| `UseViewAnchorOptions` / `ViewAnchorRef` from `view-anchor/react`           | type              | Options and ref shape for `useViewAnchor`.                                                                                    |
-| `UsePlacementAnchorOptions` / `PlacementAnchorRef` from `view-anchor/react` | type              | Options and ref shape for `usePlacementAnchor`.                                                                               |
-| `AdvertisedAxis` / `AdvertisedSize`                                         | type              | Axis and payload types for the reverse direction.                                                                             |
-| `SizeAdvertiserOptions` / `SizeAdvertiserHandle`                            | type              | Options and handle for `createSizeAdvertiser`.                                                                                |
-| `view-anchor/protocol`                                                      | functions + types | Versioned messages, strict decoding, sequence guards, message publishers, and microtask batching.                             |
+| Export                                                            | Kind              | Purpose                                                                                                                                    |
+| ----------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `createViewAnchor(target, opts)`                                  | function          | Publish a `Placement`, with opt-in `followScroll` / `followGeometry` / `treatZeroAreaAsHidden` / `holdSelector` / `dedupe`, and `pulse()`. |
+| `measurePlacement(target)`                                        | function          | Pure measurement: wraps the target rect as `{ visible: true, bounds }`.                                                                    |
+| `createSizeAnchor(target, opts)`                                  | function          | Call `publish({ axis, extent })` with one content-size axis.                                                                               |
+| `useViewAnchor(opts)` from `view-anchor/react`                    | hook              | React adapter for `createViewAnchor`, returning a ref callback for a placeholder element.                                                  |
+| `Bounds`                                                          | type              | `{ x, y, width, height }` in CSS pixels.                                                                                                   |
+| `Placement`                                                       | type              | `{ visible: true; bounds } \| { visible: false }`.                                                                                         |
+| `Publisher<T>` / `PublishResult`                                  | type              | Signature of the `publish` callback and its return value (`void \| boolean`).                                                              |
+| `ViewAnchorOptions` / `ViewAnchorHandle`                          | type              | Options and handle for `createViewAnchor`.                                                                                                 |
+| `UseViewAnchorOptions` / `ViewAnchorRef` from `view-anchor/react` | type              | Options and ref shape for `useViewAnchor`.                                                                                                 |
+| `SizeAxis` / `SizeMeasurement`                                    | type              | Axis and payload types for the reverse direction.                                                                                          |
+| `SizeAnchorOptions` / `SizeAnchorHandle`                          | type              | Options and handle for `createSizeAnchor`.                                                                                                 |
+| `view-anchor/protocol`                                            | functions + types | Versioned messages, strict decoding, sequence guards, message publishers, and microtask batching.                                          |
+
+## Versioning
+
+Within 1.x, `view-anchor` does not remove or rename any public export from `.`, `view-anchor/react`, or `view-anchor/protocol`, and does not change the default behavior for input that is already valid. Minor releases add functionality; patch releases fix bugs. An interface slated for removal is deprecated first and only removed in 2.0.
 
 ## Documentation
 
-- [docs/mechanism.md](./docs/mechanism.md): how the forward direction works. Synchronous publishing, stale-frame safety, the `present` / zero-rect / unmount contract, StrictMode behaviour. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
+- [docs/mechanism.md](./docs/mechanism.md): how the forward direction works. Synchronous publishing, default dedup and `dedupe: false`, the `Placement` / visibility / unmount contract, StrictMode behaviour. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
 - [docs/bidirectional-design.md](./docs/bidirectional-design.md): running both directions at once. Why the forward path is synchronous while the reverse path uses animation frames, single-axis ownership, and where the trust boundary sits.
 - [docs/protocol.md](./docs/protocol.md): message envelopes, validation, ordering, batching, and what happens on failure.
-- [docs/performance-report.md](./docs/performance-report.md): reproducible CPU, heap, RSS, extreme-case, V8, and export-size measurements.
+- [docs/performance-report.md](./docs/performance-report.md): performance summary and export sizes.
 
 ## Contributing
 
-Issues and pull requests are welcome. Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` prints the data used to update the performance report.
+Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` prints the data used to update the performance report.
 
-Changes that affect a published version must include a Changeset. Run `pnpm changeset`, select the version bump, and describe the user-visible change. Merging it into `main` opens a version PR; merging that PR publishes the package.
+Changes that affect a published version must include a Changeset. Run `pnpm changeset`, select the version bump, and describe the user-visible change. Merging into `main` opens a version PR; merging that PR publishes the package.
 
 ## License
 

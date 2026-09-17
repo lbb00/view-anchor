@@ -101,6 +101,32 @@ describe('decodeGeometryWireValue', () => {
     expect(decode({ v: 1, kind: 'batch', messages }, messages.length).ok).toBe(false)
     expect(decode({ v: 1, kind: 'batch', messages }, messages.length - 1).ok).toBe(false)
   })
+
+  it('rejects objects with a custom prototype, so inherited fields never count', () => {
+    const inherit = (proto: object) => Object.create(proto) as unknown
+    expect(decode(inherit(placement())).ok).toBe(false)
+    expect(decode(inherit(size())).ok).toBe(false)
+    expect(decode(inherit({ v: 1, kind: 'batch', messages: [] })).ok).toBe(false)
+    expect(decode(placement({ placement: inherit({ visible: false }) })).ok).toBe(false)
+    expect(
+      decode(
+        placement({
+          placement: { visible: true, bounds: inherit({ x: 0, y: 0, width: 1, height: 1 }) },
+        }),
+      ).ok,
+    ).toBe(false)
+    expect(decode(size({ size: inherit({ axis: 'block', extent: 1 }) })).ok).toBe(false)
+    expect(decode({ v: 1, kind: 'batch', messages: [inherit(placement())] }).ok).toBe(false)
+    class Message {
+      v = 1
+    }
+    expect(decode(Object.assign(new Message(), placement())).ok).toBe(false)
+  })
+
+  it('still accepts own fields on a null-prototype object', () => {
+    const bare = Object.assign(Object.create(null), placement()) as unknown
+    expect(decode(bare)).toEqual({ ok: true, value: placement() })
+  })
 })
 
 describe('createGeometrySequenceGuard', () => {

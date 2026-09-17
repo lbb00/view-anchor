@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>view-anchor 3D Demo: Keep External Surfaces Aligned with DOM Elements</title>
-<meta name="description" content="Interactive 3D demo showing view-anchor tracking DOM elements live in the browser, with zero frame lag and no external dependencies.">
+<meta name="description" content="Interactive 3D demo showing view-anchor tracking DOM elements live in the browser, with no external dependencies.">
 <style>
   :root {
     --bg:               hsl(  0  0%   7%);
@@ -20,6 +20,7 @@
     --native:           hsl(160  40%  16%);
     --native-bd:        hsl(160  72%  58%);
     --wire:             hsl(160  72%  60%);
+    --reverse:          hsl( 35  90%  62%);
     --accent:           hsl(249 100%  70%);
   }
 
@@ -51,23 +52,28 @@
   /* ---- 3D scene ---- */
   .scene {
     position: relative;
-    height: 380px;
-    perspective: 1500px;
-    perspective-origin: 50% 34%;
+    height: 440px;
+    perspective: 1600px;
+    perspective-origin: 50% 30%;
     display: flex; align-items: center; justify-content: center;
   }
-  /* the deck tilts as a whole on "explode" — both the DOM window and the
-     anchored view ride it, so they stay in registration in the 3D side view. */
+  /* The deck tilts as a whole on "explode": the page and the surfaces ride it,
+     so they stay in registration in the 3D view. Everything on the page stays
+     interactive while tilted — browsers hit-test through the 3D transform. */
   .deck {
     position: relative;
-    width: 560px; height: 300px;
+    width: 600px; height: 360px;
     transform-style: preserve-3d;
     transition: transform 900ms cubic-bezier(0.6, 0, 0.2, 1);
   }
-  .scene.exploded .deck { transform: rotateX(56deg) rotateZ(-30deg); }
+  .scene.exploded .deck { transform: rotateX(40deg) rotateZ(-20deg); }
 
-  /* bottom layer: renderer / DOM window (web content). Stays flat within the
-     deck (translateZ 0); view-anchor measures the placeholder inside it. */
+  /* 1px markers at known deck-local points; their projected screen positions
+     map pointer deltas back into the (possibly tilted) deck plane. */
+  .probe { position: absolute; width: 1px; height: 1px; pointer-events: none; }
+
+  /* bottom layer: the web page. Flat within the deck (translateZ 0);
+     view-anchor measures the placeholder slots inside it. */
   .window {
     position: absolute; inset: 0;
     background: var(--renderer);
@@ -76,12 +82,6 @@
     box-shadow: 0 22px 50px hsl(0 0% 0% / 0.5);
     transform: translateZ(0);
   }
-  .window .caption {
-    position: absolute; left: 14px; top: 34px;
-    font-size: 11.5px; letter-spacing: 0.03em; color: var(--text-2); pointer-events: none;
-  }
-  .window .caption b { color: var(--text); font-weight: 600; }
-
   .chrome-bar {
     position: absolute; left: 0; right: 0; top: 0; height: 26px;
     background: hsl(0 0% 10%); border-bottom: 1px solid hsl(0 0% 22%);
@@ -94,58 +94,131 @@
       radial-gradient(circle, hsl(45 80% 55%) 0 3.4px, transparent 3.8px) 14px 0/14px 8px no-repeat,
       radial-gradient(circle, hsl(135 50% 55%) 0 3.4px, transparent 3.8px) 28px 0/14px 8px no-repeat;
   }
-
-  .dom-area { position: absolute; left: 10px; right: 10px; top: 56px; bottom: 12px; display: flex; gap: 8px; }
-  .dom-sidebar {
-    flex: 1 1 auto; min-width: 64px;
-    background: hsl(0 0% 14%); border: 1px solid hsl(0 0% 22%); border-radius: 6px;
-    display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  .chrome-bar .title {
+    position: absolute; left: 0; right: 0; top: 5px; text-align: center;
+    font-size: 11px; color: var(--text-3); pointer-events: none;
   }
-  .dom-sidebar i { display: block; height: 9px; border-radius: 3px; background: hsl(0 0% 24%); }
-  .dom-sidebar i:nth-child(2) { width: 80%; } .dom-sidebar i:nth-child(3){ width: 60%; }
-  .dom-sidebar i:nth-child(4) { width: 72%; } .dom-sidebar i:nth-child(5){ width: 45%; }
+
+  .dom-area { position: absolute; left: 10px; right: 10px; top: 36px; bottom: 10px; display: flex; }
+  .dom-sidebar {
+    flex: 0 0 auto; width: 132px;
+    background: hsl(0 0% 14%); border: 1px solid hsl(0 0% 22%); border-radius: 6px;
+    display: flex; flex-direction: column; gap: 7px; padding: 10px 8px;
+    overflow: hidden;
+  }
+  .bar { display: block; height: 8px; border-radius: 3px; background: hsl(0 0% 24%); flex: none; }
+  .bar.w90 { width: 90%; } .bar.w80 { width: 80%; } .bar.w70 { width: 70%; }
+  .bar.w60 { width: 60%; } .bar.w45 { width: 45%; } .bar.w30 { width: 30%; }
+
+  .dom-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+  .page-header {
+    flex: none; height: 44px; overflow: hidden;
+    background: hsl(0 0% 14%); border: 1px solid hsl(0 0% 22%); border-radius: 6px;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+    padding: 5px 8px;
+  }
+  .page-header .bars { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; padding-top: 4px; }
+
+  .btn {
+    flex: none;
+    font: 500 10.5px/1 ui-monospace, Menlo, monospace; color: var(--text-2);
+    background: hsl(0 0% 20%); border: 1px solid hsl(0 0% 34%); border-radius: 4px;
+    padding: 4px 7px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--text); }
+  .btn:active { background: hsl(0 0% 26%); }
+
+  /* role="separator" matches view-anchor's default holdSelector: pressing one
+     keeps the followGeometry frame loop open for the whole drag. */
+  .splitter { flex: none; position: relative; touch-action: none; }
+  .splitter::after {
+    content: ""; position: absolute; border-radius: 2px;
+    background: hsl(0 0% 36%); transition: background 150ms ease;
+  }
+  .splitter:hover::after, .splitter.dragging::after { background: var(--accent); }
+  .splitter.v { width: 12px; cursor: col-resize; }
+  .splitter.v::after { left: 5px; width: 2px; top: 30%; bottom: 30%; }
+  .splitter.h { height: 12px; cursor: row-resize; }
+  .splitter.h::after { top: 5px; height: 2px; left: 30%; right: 30%; }
+
+  /* the scrolling page body; positioned so it is the slots' offsetParent */
+  .scroller {
+    position: relative;
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 8px 10px 10px;
+    background: hsl(0 0% 12%); border: 1px solid hsl(0 0% 20%); border-radius: 6px;
+    scrollbar-width: thin; scrollbar-color: hsl(0 0% 32%) transparent;
+  }
+  .slot-row {
+    flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 10.5px; color: var(--text-3);
+  }
 
   .placeholder {
-    flex: 0 0 58%;
-    position: relative;
+    flex: none; position: relative;
     border-radius: 6px;
     background: var(--placeholder);
     border: 1.5px dashed var(--placeholder-bd);
     display: flex; align-items: center; justify-content: center;
-    /* no transition: track the slider 1:1 so the anchored view stays glued */
+    overflow: hidden;
+    /* no transition: slots move 1:1 with the page so the surfaces stay glued */
   }
-  .placeholder .ph-tag { font-size: 11px; color: var(--placeholder-bd); text-align: center; padding: 0 8px; }
-  .placeholder .ph-tag small { color: var(--text-3); display:block; margin-top:2px; font-size:10px; }
+  .placeholder.slot-a { height: 116px; }
+  .placeholder.slot-b { height: 36px; border-color: var(--reverse); background: hsl(35 90% 60% / 0.1); }
+  .placeholder .ph-tag { font-size: 10.5px; color: var(--placeholder-bd); text-align: center; padding: 0 8px; white-space: nowrap; }
+  .placeholder.slot-b .ph-tag { color: var(--reverse); }
 
-  /* top layer: the anchored view. A direct child of the deck so it lives
-     in the same 3D space; lifted in Z on explode to float above the DOM. */
-  .follower {
+  /* top layer: the external surfaces. Direct children of the deck so they
+     live in the same 3D space; lifted in Z on explode to float above the page.
+     The host clips each one to the page's scroll viewport. */
+  .surface {
     position: absolute;
     border-radius: 6px;
-    background: linear-gradient(180deg, hsl(160 40% 20%), hsl(160 38% 13%));
     border: 1.5px solid var(--native-bd);
+    background: linear-gradient(180deg, hsl(160 40% 20%), hsl(160 38% 13%));
     box-shadow: 0 0 0 1px hsl(160 72% 60% / 0.25), inset 0 0 24px hsl(160 72% 50% / 0.12);
-    /* position/size snap each frame — only the
-       explode lift + collapse fade animate; otherwise tracking rubber-bands. */
-    transition: transform 900ms cubic-bezier(0.6,0,0.2,1), box-shadow 900ms, opacity 300ms;
+    /* position/size snap each frame — only the explode lift and the fade
+       animate; otherwise tracking rubber-bands. */
+    transition: transform 900ms cubic-bezier(0.6,0,0.2,1), box-shadow 900ms, opacity 250ms;
     overflow: hidden;
-    display: flex; align-items: center; justify-content: center;
     transform: translateZ(0.5px);
+    /* never swallow presses meant for the page underneath; only surface B's
+       own buttons take input */
+    pointer-events: none;
   }
-  .follower .nv-label { font-size: 11px; color: var(--native-bd); letter-spacing: 0.02em; text-align:center; }
-  .follower .nv-label small { display:block; color: hsl(160 30% 62%); font-size:10px; margin-top:2px; }
-  .follower .row-marker {
-    position:absolute; left:0; right:0; top:0; height:18px; background: hsl(160 30% 22% / 0.55);
-    border-bottom:1px solid hsl(160 50% 40% / 0.4);
+  .surface.a { display: flex; align-items: center; justify-content: center; }
+  .surface .label { font-size: 11px; color: var(--native-bd); letter-spacing: 0.02em; text-align: center; }
+  .surface .label small { display: block; color: hsl(160 30% 62%); font-size: 10px; margin-top: 2px; }
+  .surface.b {
+    border-color: var(--reverse);
+    background: linear-gradient(180deg, hsl(35 40% 20%), hsl(35 34% 13%));
+    box-shadow: 0 0 0 1px hsl(35 90% 60% / 0.25), inset 0 0 24px hsl(35 90% 50% / 0.1);
   }
-  .scene.exploded .follower {
-    transform: translateZ(120px);
+  /* surface B's own content: shrink-to-fit on the block axis, so its height
+     is what createSizeAnchor reports back to the page. */
+  .b-content { position: absolute; left: 0; right: 0; top: 0; padding: 5px 6px 6px; }
+  .b-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 10.5px; color: var(--reverse); }
+  .b-head .btn { pointer-events: auto; padding: 2px 7px; color: var(--reverse); border-color: hsl(35 80% 55% / 0.5); background: hsl(35 50% 22%); }
+  .b-items { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+  .b-items:empty { display: none; }
+  .b-items b {
+    display: block; height: 16px; padding: 0 6px; border-radius: 4px;
+    font: 500 9.5px/16px ui-monospace, Menlo, monospace; color: hsl(35 90% 78%);
+    background: hsl(35 60% 30% / 0.55); border: 1px solid hsl(35 80% 55% / 0.4);
+  }
+  .scene.exploded .surface {
+    transform: translateZ(90px);
     box-shadow: 0 0 0 1px hsl(160 72% 60% / 0.4), 0 30px 60px hsl(0 0% 0% / 0.55),
                 0 0 44px hsl(160 72% 50% / 0.22);
   }
-  .follower.collapsed { opacity: 0 !important; }
+  .scene.exploded .surface.b {
+    box-shadow: 0 0 0 1px hsl(35 90% 60% / 0.4), 0 30px 60px hsl(0 0% 0% / 0.55),
+                0 0 44px hsl(35 90% 50% / 0.2);
+  }
+  .surface.off { opacity: 0 !important; }
 
-  /* connector pillar standing along Z from the placeholder up to the view */
+  /* connector pillars standing along Z from each slot up to its surface */
   .pillar {
     position: absolute; width: 0;
     border-left: 1.5px dashed var(--native-bd);
@@ -154,11 +227,13 @@
     opacity: 0; transition: opacity 400ms ease;
     pointer-events: none;
   }
+  .pillar.b { border-left-color: var(--reverse); }
   .scene.exploded .pillar { opacity: 0.5; }
+  .pillar.off { opacity: 0 !important; }
 
   /* ---- controls ---- */
   .controls {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px;
     margin-top: 22px; padding-top: 18px; border-top: 1px solid hsl(0 0% 17%);
   }
   .ctl { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--text-2); }
@@ -171,15 +246,15 @@
   .switch input:checked ~ .track { background: var(--accent); }
   .switch input:checked ~ .thumb { transform: translateX(18px); }
 
-  input[type=range] { accent-color: var(--accent); width: 150px; }
-
   .readout {
-    margin-left: auto;
-    font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--wire);
+    margin-top: 16px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.7; color: var(--wire);
     background: hsl(160 40% 12% / 0.5); border: 1px solid hsl(160 50% 40% / 0.35);
-    border-radius: 8px; padding: 8px 12px; min-width: 232px; text-align: center;
+    border-radius: 8px; padding: 8px 12px;
+    overflow-x: auto; white-space: pre;
   }
   .readout .k { color: var(--text-3); }
+  .readout .rev { color: var(--reverse); }
 
   .legend { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 18px; font-size: 12px; color: var(--text-2); }
   .legend span { display: inline-flex; align-items: center; gap: 7px; }
@@ -187,6 +262,7 @@
   .sw.r { background: var(--renderer); border: 1.5px solid var(--renderer-bd); }
   .sw.p { background: var(--placeholder); border: 1.5px dashed var(--placeholder-bd); }
   .sw.n { background: var(--native); border: 1.5px solid var(--native-bd); }
+  .sw.t { background: hsl(35 40% 18%); border: 1.5px solid var(--reverse); }
 
   footer.note { margin-top: 22px; color: var(--text-3); font-size: 12px; line-height: 1.6; }
   footer.note code { color: var(--text-2); }
@@ -200,6 +276,8 @@
   .actions a:hover { color: var(--text); border-bottom-color: var(--text-2); }
   footer.note { display: flex; flex-direction: column; gap: 10px; }
   footer.note .hint { color: var(--text-3); font-size: 12.5px; }
+  footer.note .hint ul { margin: 6px 0 0; padding-left: 18px; }
+  footer.note .hint li { margin: 3px 0; }
 
 </style>
 </head>
@@ -210,10 +288,9 @@
       <img alt="npm version" src="https://img.shields.io/npm/v/view-anchor">
       <img alt="npm downloads" src="https://img.shields.io/npm/dm/view-anchor">
       <img alt="License" src="https://img.shields.io/npm/l/view-anchor">
-      <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D24-339933">
     </div>
     <h1>view-anchor: interactive 3D demo</h1>
-    <p class="tag-en">Align external surfaces (native views, canvases, iframes) to DOM elements in real time. Drag the splitter or toggle controls below: the green surface is positioned live by view-anchor.</p>
+    <p class="tag-en">Keep external surfaces (native views, canvases, iframes) aligned with DOM placeholders, and let a surface report its content size back to the page. The page below stays live while tilted: drag, scroll and click it directly.</p>
     <div class="actions">
       <a href="https://github.com/lbb00/view-anchor">GitHub</a>
       <a href="https://www.npmjs.com/package/view-anchor">npm</a>
@@ -224,25 +301,62 @@
 <div class="stage-shell">
     <div class="scene" id="scene">
       <div class="deck" id="deck">
-        <!-- bottom layer: the renderer / DOM window -->
+        <i class="probe" id="probe-o" style="left:0;top:0"></i>
+        <i class="probe" id="probe-x" style="left:100px;top:0"></i>
+        <i class="probe" id="probe-y" style="left:0;top:100px"></i>
+
+        <!-- bottom layer: the web page -->
         <div class="window">
-          <div class="chrome-bar"><div class="traffic"></div></div>
-          <div class="caption"><b>Renderer DOM</b></div>
+          <div class="chrome-bar"><div class="traffic"></div><div class="title">web page</div></div>
           <div class="dom-area">
-            <div class="dom-sidebar"><i></i><i></i><i></i><i></i><i></i></div>
-            <div class="placeholder" id="placeholder">
-              <div class="ph-tag">&lt;div ref={anchorRef} /&gt;</div>
+            <div class="dom-sidebar" id="sidebar">
+              <i class="bar w80"></i><i class="bar w60"></i><i class="bar w70"></i>
+              <i class="bar w45"></i><i class="bar w80"></i><i class="bar w30"></i>
+            </div>
+            <div class="splitter v" id="split-side" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
+            <div class="dom-main">
+              <div class="page-header" id="page-header">
+                <div class="bars"><i class="bar w45"></i><i class="bar w70"></i><i class="bar w30"></i></div>
+                <button class="btn" id="collapse" type="button">collapse</button>
+              </div>
+              <div class="splitter h" id="split-header" role="separator" aria-orientation="horizontal" aria-label="Resize header"></div>
+              <div class="scroller" id="scroller">
+                <i class="bar w90"></i><i class="bar w70"></i>
+                <div class="placeholder slot-b" id="slot-b">
+                  <div class="ph-tag">slot B · height set by surface B</div>
+                </div>
+                <i class="bar w80"></i><i class="bar w60"></i>
+                <div class="slot-row">
+                  <span>slot A</span>
+                  <button class="btn" id="hide-a" type="button">hide A</button>
+                </div>
+                <div class="placeholder slot-a" id="slot-a">
+                  <div class="ph-tag">&lt;div ref={anchorRef} /&gt;</div>
+                </div>
+                <i class="bar w90"></i><i class="bar w70"></i><i class="bar w80"></i>
+                <i class="bar w45"></i><i class="bar w90"></i><i class="bar w60"></i>
+                <i class="bar w80"></i><i class="bar w30"></i>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- connector pillar: from the placeholder up to the anchored view along Z -->
-        <div class="pillar" id="pillar"></div>
+        <!-- connector pillars: from each slot up to its surface along Z -->
+        <div class="pillar" id="pillar-a"></div>
+        <div class="pillar b" id="pillar-b"></div>
 
-        <!-- top layer: the anchored view, driven by view-anchor -->
-        <div class="follower" id="follower">
-          <div class="row-marker"></div>
-          <div class="nv-label">Anchored view</div>
+        <!-- top layer: the external surfaces, positioned by view-anchor -->
+        <div class="surface a" id="surface-a">
+          <div class="label">Surface A<small>DOM → surface</small></div>
+        </div>
+        <div class="surface b" id="surface-b">
+          <div class="b-content" id="b-content">
+            <div class="b-head">
+              <span>Surface B · surface → DOM</span>
+              <span><button class="btn" id="b-less" type="button">−</button> <button class="btn" id="b-more" type="button">+</button></span>
+            </div>
+            <div class="b-items" id="b-items"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -250,29 +364,41 @@
     <div class="controls">
       <div class="ctl">
         <span class="switch">
-          <input type="checkbox" id="present" checked>
+          <input type="checkbox" id="visible" checked>
           <span class="track"></span><span class="thumb"></span>
         </span>
-        <label for="present">Mount (<code>present</code>)</label>
+        <label for="visible"><code>visible</code></label>
       </div>
       <div class="ctl">
-        <label for="split">Split</label>
-        <input type="range" id="split" min="34" max="78" value="58">
+        <span class="switch">
+          <input type="checkbox" id="follow-geometry" checked>
+          <span class="track"></span><span class="thumb"></span>
+        </span>
+        <label for="follow-geometry"><code>followGeometry</code></label>
+      </div>
+      <div class="ctl">
+        <span class="switch">
+          <input type="checkbox" id="follow-scroll" checked>
+          <span class="track"></span><span class="thumb"></span>
+        </span>
+        <label for="follow-scroll"><code>followScroll</code></label>
       </div>
       <div class="ctl">
         <span class="switch">
           <input type="checkbox" id="explode" checked>
           <span class="track"></span><span class="thumb"></span>
         </span>
-        <label for="explode">3D Explode</label>
+        <label for="explode">3D view</label>
       </div>
-      <div class="readout" id="readout"></div>
     </div>
 
+    <div class="readout" id="readout"></div>
+
     <div class="legend">
-      <span><span class="sw r"></span> DOM window</span>
-      <span><span class="sw p"></span> Placeholder div</span>
-      <span><span class="sw n"></span> Anchored view</span>
+      <span><span class="sw r"></span> Web page</span>
+      <span><span class="sw p"></span> Placeholder slot</span>
+      <span><span class="sw n"></span> Surface A (DOM → surface)</span>
+      <span><span class="sw t"></span> Surface B (surface → DOM)</span>
     </div>
   </div>
 
@@ -282,17 +408,27 @@
       <a href="https://www.npmjs.com/package/view-anchor">npm · view-anchor</a>
       <span style="color:var(--text-3)">MIT licensed</span>
     </div>
-    <div class="hint">Drag <b>Split</b> to resize the placeholder, or toggle <b>3D Explode</b> to inspect the Z-space layering. The green overlay tracks the layout synchronously via the <code>publish</code> callback.</div>
+    <div class="hint">
+      Each surface follows its slot through <code>createViewAnchor</code>. Everything below happens on the page itself, tilted or flat:
+      <ul>
+        <li><b>Drag the vertical splitter.</b> Both slots resize, so a <code>ResizeObserver</code> sees it. Surface B's items rewrap, and <code>createSizeAnchor</code> reports the new height back to the page.</li>
+        <li><b>Drag the header's lower edge.</b> The slots move but keep their size, so no observer fires. Pressing a <code>role="separator"</code> (the default <code>holdSelector</code>) keeps the <code>followGeometry</code> frame loop open for the whole drag. Turn <code>followGeometry</code> off and try again.</li>
+        <li><b>Scroll the page body.</b> <code>followScroll</code> re-measures on ancestor scrolls; the page clips each surface to the scroll viewport. Turn <code>followScroll</code> off and scroll again.</li>
+        <li><b>Click <code>collapse</code>.</b> The page moves the slots itself, so it calls <code>pulse()</code> to re-measure on the next frames.</li>
+        <li><b>Click <code>+</code> / <code>−</code> on surface B.</b> Its content changes height; the page resizes slot B. Slot A moves without resizing, so the page calls <code>pulse()</code> on A.</li>
+        <li><b>Click <code>hide A</code>.</b> The slot gets <code>display: none</code>; <code>treatZeroAreaAsHidden</code> publishes <code>{ visible: false }</code> instead of a 0×0 rect.</li>
+      </ul>
+    </div>
   </footer>
 
 </div>
 
-<!-- Bootstrapped from src/view-anchor.ts by `pnpm build:docs` and inlined here
-     as an esbuild IIFE — this block is GENERATED, do not hand-edit. Inlined
-     rather than imported so the page can open from file://, where browsers
-     block cross-origin ES module imports. -->
+<!-- Bootstrapped from src/view-anchor.ts and src/size-anchor.ts by
+     `pnpm build:docs` and inlined here as an IIFE — this block is GENERATED,
+     do not hand-edit. Inlined rather than imported so the page can open from
+     file://, where browsers block cross-origin ES module imports. -->
 <script>
-/* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts by `pnpm build:docs`; do not edit */
+/* __VIEW_ANCHOR_CORE_START__ — generated from src/view-anchor.ts and src/size-anchor.ts by `pnpm build:docs`; do not edit */
 var __viewAnchorCore = (function(exports) {
 	Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 	//#region src/abort.ts
@@ -306,123 +442,14 @@ var __viewAnchorCore = (function(exports) {
 	}
 	//#endregion
 	//#region src/view-anchor.ts
-	const ZERO = {
-		x: 0,
-		y: 0,
-		width: 0,
-		height: 0
-	};
-	const NOOP_PUBLISH = () => false;
+	const NOOP_PUBLISH$1 = () => false;
+	const DEFAULT_HOLD_SELECTOR = "[role=\"separator\"]";
 	const clampRect = (r) => ({
 		x: Math.round(r.x),
 		y: Math.round(r.y),
 		width: Math.max(0, Math.round(r.width)),
 		height: Math.max(0, Math.round(r.height))
 	});
-	/**
-	* Bind a native view or external surface to the geometry of `target`.
-	*
-	* - `present === true`: measures `target.getBoundingClientRect()` and publishes
-	*   immediately, then re-measures synchronously on ResizeObserver and window resize.
-	* - `present === false`: publishes a zero rect ({ x: 0, y: 0, width: 0, height: 0 })
-	*   and stops observing.
-	* - `update(opts)`: re-applies options immediately.
-	* - `dispose()`: stops observing and prevents any further publishes.
-	*
-	* Synchronous publishing: measurement and publishing occur directly in the
-	* observer tick. Applying geometry outside the DOM may already be delayed;
-	* adding requestAnimationFrame would add another frame of visual lag during drag
-	* operations. High-frequency updates are deduplicated against the last accepted rect.
-	*/
-	function createViewAnchor(target, opts) {
-		let present = opts.present;
-		let publish = opts.publish;
-		let observer = null;
-		let targetRef = target;
-		let lastPublished = null;
-		let publicationRevision = 0;
-		let disposed = false;
-		const measure = () => {
-			const r = targetRef.getBoundingClientRect();
-			if (!Number.isFinite(r.left) || !Number.isFinite(r.top) || !Number.isFinite(r.width) || !Number.isFinite(r.height)) return null;
-			return clampRect({
-				x: r.left,
-				y: r.top,
-				width: r.width,
-				height: r.height
-			});
-		};
-		const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
-		const publishCandidate = (candidate) => {
-			const previous = lastPublished;
-			const attempt = ++publicationRevision;
-			lastPublished = candidate;
-			try {
-				const accepted = publish(candidate) !== false;
-				if (!accepted && publicationRevision === attempt && !disposed) lastPublished = previous;
-				return accepted;
-			} catch (error) {
-				if (publicationRevision === attempt && !disposed) lastPublished = previous;
-				throw error;
-			}
-		};
-		const emit = () => {
-			if (disposed || !present) return;
-			const m = measure();
-			if (!m) return;
-			if (lastPublished && sameRect(lastPublished, m)) return;
-			publishCandidate(m);
-		};
-		const startObserving = () => {
-			if (observer) return;
-			observer = new ResizeObserver(emit);
-			observer.observe(targetRef);
-			window.addEventListener("resize", emit);
-		};
-		const stopObserving = () => {
-			if (observer) {
-				observer.disconnect();
-				observer = null;
-			}
-			window.removeEventListener("resize", emit);
-		};
-		const apply = () => {
-			lastPublished = null;
-			if (present) {
-				startObserving();
-				const measured = measure();
-				if (measured) publishCandidate(measured);
-			} else {
-				stopObserving();
-				publishCandidate(ZERO);
-			}
-		};
-		let removeAbortListener = () => {};
-		const dispose = () => {
-			if (disposed) return;
-			disposed = true;
-			removeAbortListener();
-			removeAbortListener = () => {};
-			stopObserving();
-			targetRef = null;
-			publish = NOOP_PUBLISH;
-			lastPublished = null;
-		};
-		if (opts.signal?.aborted) dispose();
-		else {
-			removeAbortListener = watchAbort(opts.signal, dispose);
-			apply();
-		}
-		return {
-			update(next) {
-				if (disposed) return;
-				publish = next.publish;
-				present = next.present;
-				apply();
-			},
-			dispose
-		};
-	}
 	/**
 	* Read target's current rect and return { visible: true, bounds }.
 	* Does not infer visibility from dimensions.
@@ -445,17 +472,26 @@ var __viewAnchorCore = (function(exports) {
 		return true;
 	};
 	/**
-	* Explicit-visibility variant of createViewAnchor.
+	* Bind a native view or external surface to the geometry of `target`.
+	*
+	* When `visible === true`, publishes { visible: true, bounds } immediately,
+	* then re-measures synchronously on ResizeObserver and window resize.
+	* When `visible === false`, publishes { visible: false } and stops observing.
+	* Publishes are deduplicated against the last accepted Placement by default
+	* (see the `dedupe` option).
 	*/
-	function createPlacementAnchor(target, opts) {
+	function createViewAnchor(target, opts) {
+		if (opts.holdSelector) target.matches(opts.holdSelector);
 		let visible = opts.visible;
 		let publish = opts.publish;
-		let guardDisplayNone = opts.guardDisplayNone ?? false;
+		let treatZeroAreaAsHidden = opts.treatZeroAreaAsHidden ?? false;
 		let followScroll = opts.followScroll ?? false;
 		let followGeometry = opts.followGeometry ?? false;
+		let holdSelector = opts.holdSelector === void 0 ? DEFAULT_HOLD_SELECTOR : opts.holdSelector;
+		let dedupe = opts.dedupe ?? true;
 		let targetRef = target;
 		let observer = null;
-		let io = null;
+		let intersectionObserver = null;
 		let scrollListening = false;
 		let geometryListening = false;
 		const capture = { capture: true };
@@ -471,17 +507,18 @@ var __viewAnchorCore = (function(exports) {
 		const STEADY_CLOSE_FRAMES = 2;
 		const MAX_HIDDEN_FOLLOW_FRAMES = 30;
 		const MAX_INVALID_FOLLOW_FRAMES = 30;
+		let hiddenFrames = 0;
 		let invalidFrames = 0;
-		let pointerHeld = false;
-		let activePointerId = null;
-		let sentinelDeadline = null;
-		const computePlacement = () => {
+		const heldPointerIds = /* @__PURE__ */ new Set();
+		let lastFramePlacement = null;
+		let followDeadline = null;
+		const measureTarget = () => {
 			const p = measurePlacement(targetRef);
 			if (p.visible && (!Number.isFinite(p.bounds.x) || !Number.isFinite(p.bounds.y) || !Number.isFinite(p.bounds.width) || !Number.isFinite(p.bounds.height))) return null;
-			if (guardDisplayNone && p.visible && (p.bounds.width === 0 || p.bounds.height === 0)) return { visible: false };
+			if (treatZeroAreaAsHidden && p.visible && (p.bounds.width === 0 || p.bounds.height === 0)) return { visible: false };
 			return p;
 		};
-		const publishCandidate = (candidate) => {
+		const publishPlacement = (candidate) => {
 			const previous = lastPublished;
 			const attempt = ++publicationRevision;
 			lastPublished = candidate;
@@ -494,117 +531,110 @@ var __viewAnchorCore = (function(exports) {
 				throw error;
 			}
 		};
-		const emit = () => {
+		const measureAndPublish = () => {
 			if (disposed || !visible) return;
-			const p = computePlacement();
+			const p = measureTarget();
 			if (!p) return;
-			if (lastPublished && samePlacement(lastPublished, p)) return;
-			publishCandidate(p);
+			if (dedupe && lastPublished && samePlacement(lastPublished, p)) return;
+			publishPlacement(p);
 		};
-		const shouldCloseOnHiddenPoll = () => {
-			if (lastPublished?.visible === false) return true;
-			return steadyFrames++ >= MAX_HIDDEN_FOLLOW_FRAMES;
+		const scheduleFollowFrame = () => {
+			if (!disposed && visible && followGeometry) rafId = requestAnimationFrame(followFrame);
+			else followDeadline = null;
 		};
-		const sentinelFrame = () => {
+		const followFrame = () => {
 			rafId = null;
-			if (disposed || !visible) {
-				sentinelDeadline = null;
+			if (disposed || !visible || heldPointerIds.size === 0 && followDeadline !== null && performance.now() >= followDeadline) {
+				followDeadline = null;
 				return;
 			}
-			if (sentinelDeadline !== null && performance.now() >= sentinelDeadline) {
-				sentinelDeadline = null;
-				return;
-			}
-			const p = computePlacement();
+			const p = measureTarget();
 			if (!p) {
-				if (invalidFrames++ >= MAX_INVALID_FOLLOW_FRAMES) {
-					sentinelDeadline = null;
-					return;
-				}
-				if (!disposed && visible && followGeometry) rafId = requestAnimationFrame(sentinelFrame);
-				else sentinelDeadline = null;
+				if (++invalidFrames >= MAX_INVALID_FOLLOW_FRAMES) followDeadline = null;
+				else scheduleFollowFrame();
 				return;
 			}
 			invalidFrames = 0;
 			if (!p.visible) {
-				if (shouldCloseOnHiddenPoll()) {
-					sentinelDeadline = null;
-					return;
-				}
-				if (!disposed && visible && followGeometry) rafId = requestAnimationFrame(sentinelFrame);
-				else sentinelDeadline = null;
+				if (lastPublished?.visible === false || ++hiddenFrames >= MAX_HIDDEN_FOLLOW_FRAMES) followDeadline = null;
+				else scheduleFollowFrame();
 				return;
 			}
-			if (lastPublished && samePlacement(lastPublished, p)) {
-				steadyFrames++;
-				if (steadyFrames >= STEADY_CLOSE_FRAMES && !pointerHeld) {
-					sentinelDeadline = null;
+			const steadyFrame = lastFramePlacement !== null && samePlacement(lastFramePlacement, p);
+			lastFramePlacement = p;
+			if (!dedupe || !lastPublished || !samePlacement(lastPublished, p)) publishPlacement(p);
+			if (steadyFrame) {
+				if (++steadyFrames >= STEADY_CLOSE_FRAMES && heldPointerIds.size === 0) {
+					followDeadline = null;
 					return;
 				}
 			} else {
-				publishCandidate(p);
 				steadyFrames = 0;
+				hiddenFrames = 0;
 			}
-			if (!disposed && visible && followGeometry) rafId = requestAnimationFrame(sentinelFrame);
-			else sentinelDeadline = null;
+			scheduleFollowFrame();
 		};
-		const openSentinel = () => {
+		const startFrameFollow = () => {
 			if (!followGeometry || disposed) return;
 			steadyFrames = 0;
+			hiddenFrames = 0;
+			lastFramePlacement = lastPublished;
 			if (rafId === null) {
 				invalidFrames = 0;
-				rafId = requestAnimationFrame(sentinelFrame);
+				rafId = requestAnimationFrame(followFrame);
 			}
 		};
-		const closeSentinel = () => {
+		const stopFrameFollow = () => {
 			if (rafId !== null) {
 				cancelAnimationFrame(rafId);
 				rafId = null;
 			}
 			steadyFrames = 0;
+			hiddenFrames = 0;
 			invalidFrames = 0;
-			sentinelDeadline = null;
-			pointerHeld = false;
-			activePointerId = null;
+			lastFramePlacement = lastPublished;
+			followDeadline = null;
+			heldPointerIds.clear();
 		};
 		const onScroll = () => {
-			if (followGeometry) openSentinel();
-			else emit();
+			if (followGeometry) startFrameFollow();
+			else measureAndPublish();
 		};
 		const onPointerDown = (e) => {
 			const t = e.target;
-			if (t && t.closest && t.closest("[role=\"separator\"]")) {
-				if (!pointerHeld) activePointerId = e.pointerId;
-				pointerHeld = true;
-				openSentinel();
+			if (holdSelector && t && t.closest && t.closest(holdSelector)) {
+				if (heldPointerIds.size === 0) followDeadline = null;
+				heldPointerIds.add(e.pointerId);
+				startFrameFollow();
 			}
 		};
-		const releasePointer = (e) => {
-			if (!pointerHeld) return;
-			if (e && activePointerId !== e.pointerId) return;
-			pointerHeld = false;
-			activePointerId = null;
-			openSentinel();
+		const releasePointer = (pointerId) => {
+			if (heldPointerIds.size === 0) return;
+			if (pointerId !== void 0 && !heldPointerIds.delete(pointerId)) return;
+			if (pointerId === void 0) heldPointerIds.clear();
+			if (heldPointerIds.size > 0) return;
+			followDeadline = null;
+			startFrameFollow();
 		};
 		const onPointerUp = (e) => {
-			releasePointer(e);
+			releasePointer(e.pointerId);
 		};
 		const onPointerCancel = (e) => {
-			releasePointer(e);
+			releasePointer(e.pointerId);
 		};
 		const onWindowBlur = () => {
 			releasePointer();
 		};
 		const startOptionalObserving = () => {
-			if (guardDisplayNone && !io && typeof IntersectionObserver !== "undefined") {
-				io = new IntersectionObserver(emit);
-				io.observe(targetRef);
+			if (treatZeroAreaAsHidden && !intersectionObserver && typeof IntersectionObserver !== "undefined") {
+				intersectionObserver = new IntersectionObserver(measureAndPublish);
+				intersectionObserver.observe(targetRef);
 			}
 			if (followScroll && !scrollListening) {
 				window.addEventListener("scroll", onScroll, passiveCapture);
 				scrollListening = true;
 			}
-			if (followGeometry && !geometryListening) {
+			if (followGeometry && holdSelector && !geometryListening) {
 				window.addEventListener("pointerdown", onPointerDown, capture);
 				window.addEventListener("pointerup", onPointerUp, capture);
 				window.addEventListener("pointercancel", onPointerCancel, capture);
@@ -612,47 +642,38 @@ var __viewAnchorCore = (function(exports) {
 				geometryListening = true;
 			}
 		};
-		const stopOptionalObserving = () => {
-			if (io && !guardDisplayNone) {
-				io.disconnect();
-				io = null;
-			}
-			if (scrollListening && !followScroll) {
-				window.removeEventListener("scroll", onScroll, passiveCapture);
-				scrollListening = false;
-			}
-			if (geometryListening && !followGeometry) {
-				window.removeEventListener("pointerdown", onPointerDown, capture);
-				window.removeEventListener("pointerup", onPointerUp, capture);
-				window.removeEventListener("pointercancel", onPointerCancel, capture);
-				window.removeEventListener("blur", onWindowBlur);
-				geometryListening = false;
-				closeSentinel();
-			}
+		const stopIntersection = () => {
+			if (!intersectionObserver) return;
+			intersectionObserver.disconnect();
+			intersectionObserver = null;
 		};
-		const stopAllOptionalObserving = () => {
-			if (io) {
-				io.disconnect();
-				io = null;
+		const stopScroll = () => {
+			if (!scrollListening) return;
+			window.removeEventListener("scroll", onScroll, passiveCapture);
+			scrollListening = false;
+		};
+		const stopGeometryListeners = () => {
+			if (!geometryListening) return;
+			window.removeEventListener("pointerdown", onPointerDown, capture);
+			window.removeEventListener("pointerup", onPointerUp, capture);
+			window.removeEventListener("pointercancel", onPointerCancel, capture);
+			window.removeEventListener("blur", onWindowBlur);
+			geometryListening = false;
+		};
+		const stopDisabledObserving = () => {
+			if (!treatZeroAreaAsHidden) stopIntersection();
+			if (!followScroll) stopScroll();
+			if ((!followGeometry || !holdSelector) && geometryListening) {
+				stopGeometryListeners();
+				heldPointerIds.clear();
 			}
-			if (scrollListening) {
-				window.removeEventListener("scroll", onScroll, passiveCapture);
-				scrollListening = false;
-			}
-			if (geometryListening) {
-				window.removeEventListener("pointerdown", onPointerDown, capture);
-				window.removeEventListener("pointerup", onPointerUp, capture);
-				window.removeEventListener("pointercancel", onPointerCancel, capture);
-				window.removeEventListener("blur", onWindowBlur);
-				geometryListening = false;
-			}
-			closeSentinel();
+			if (!followGeometry) stopFrameFollow();
 		};
 		const startObserving = () => {
 			if (observer) return;
-			observer = new ResizeObserver(emit);
+			observer = new ResizeObserver(measureAndPublish);
 			observer.observe(targetRef);
-			window.addEventListener("resize", emit);
+			window.addEventListener("resize", measureAndPublish);
 			startOptionalObserving();
 		};
 		const stopObserving = () => {
@@ -660,18 +681,21 @@ var __viewAnchorCore = (function(exports) {
 				observer.disconnect();
 				observer = null;
 			}
-			window.removeEventListener("resize", emit);
-			stopAllOptionalObserving();
+			window.removeEventListener("resize", measureAndPublish);
+			stopIntersection();
+			stopScroll();
+			stopGeometryListeners();
+			stopFrameFollow();
 		};
-		const apply = () => {
+		const applyOptions = () => {
 			lastPublished = null;
 			if (visible) {
 				startObserving();
-				const placement = computePlacement();
-				if (placement) publishCandidate(placement);
+				const placement = measureTarget();
+				if (placement) publishPlacement(placement);
 			} else {
 				stopObserving();
-				publishCandidate({ visible: false });
+				publishPlacement({ visible: false });
 			}
 		};
 		let removeAbortListener = () => {};
@@ -682,41 +706,149 @@ var __viewAnchorCore = (function(exports) {
 			removeAbortListener = () => {};
 			stopObserving();
 			targetRef = null;
-			publish = NOOP_PUBLISH;
+			publish = NOOP_PUBLISH$1;
 			lastPublished = null;
 		};
 		if (opts.signal?.aborted) dispose();
 		else {
 			removeAbortListener = watchAbort(opts.signal, dispose);
-			apply();
+			try {
+				applyOptions();
+			} catch (error) {
+				dispose();
+				throw error;
+			}
 		}
 		return {
 			update(next) {
 				if (disposed) return;
+				if (next.holdSelector) targetRef.matches(next.holdSelector);
 				publish = next.publish;
 				visible = next.visible;
-				guardDisplayNone = next.guardDisplayNone ?? guardDisplayNone;
-				followScroll = next.followScroll ?? followScroll;
-				followGeometry = next.followGeometry ?? followGeometry;
+				treatZeroAreaAsHidden = next.treatZeroAreaAsHidden ?? false;
+				followScroll = next.followScroll ?? false;
+				followGeometry = next.followGeometry ?? false;
+				holdSelector = next.holdSelector === void 0 ? DEFAULT_HOLD_SELECTOR : next.holdSelector;
+				dedupe = next.dedupe ?? true;
 				if (visible && observer) {
-					stopOptionalObserving();
+					stopDisabledObserving();
 					startOptionalObserving();
 				}
-				apply();
+				applyOptions();
 			},
 			dispose,
 			pulse(durationMs) {
 				if (disposed || !followGeometry) return;
 				if (durationMs !== void 0 && durationMs > 0) {
 					const next = performance.now() + durationMs;
-					sentinelDeadline = sentinelDeadline === null ? next : Math.max(sentinelDeadline, next);
+					followDeadline = followDeadline === null ? next : Math.max(followDeadline, next);
 				}
-				openSentinel();
+				startFrameFollow();
 			}
 		};
 	}
 	//#endregion
-	exports.createPlacementAnchor = createPlacementAnchor;
+	//#region src/size-anchor.ts
+	const NOOP_PUBLISH = () => false;
+	/**
+	* Report content size for a single axis back to the host.
+	*
+	* Runs in a downstream document, reads the content size from
+	* `ResizeObserverEntry.borderBoxSize` without triggering reflow, and
+	* publishes at most once per animation frame, skipping unchanged extents by
+	* default (see the `dedupe` option).
+	*
+	* Measurements are rounded to integer pixels and clamped to >= 0.
+	*
+	* `target` must be a shrink-to-fit wrapper on the owned axis.
+	* If its size is driven by the host view itself (such as `<body>` or `<html>`),
+	* updates will not shrink back to content size.
+	*/
+	function createSizeAnchor(target, opts) {
+		const axis = opts.axis;
+		let dedupe = opts.dedupe ?? true;
+		let publish = opts.publish;
+		let observer = null;
+		let rafId = null;
+		let disposed = false;
+		let latestBoxSize = null;
+		let lastPublished = null;
+		let publicationRevision = 0;
+		const measure = () => {
+			if (!latestBoxSize) return null;
+			const raw = axis === "block" ? latestBoxSize.blockSize : latestBoxSize.inlineSize;
+			if (!Number.isFinite(raw)) return null;
+			return Math.max(0, Math.round(raw));
+		};
+		const publishExtent = (extent) => {
+			const previous = lastPublished;
+			const attempt = ++publicationRevision;
+			lastPublished = extent;
+			try {
+				if (!(publish({
+					axis,
+					extent
+				}) !== false) && publicationRevision === attempt && !disposed) lastPublished = previous;
+			} catch (error) {
+				if (publicationRevision === attempt && !disposed) lastPublished = previous;
+				throw error;
+			}
+		};
+		const publishFrame = () => {
+			rafId = null;
+			if (disposed) return;
+			const extent = measure();
+			if (extent === null) return;
+			if (dedupe && extent === lastPublished) return;
+			publishExtent(extent);
+		};
+		const onResize = (entries) => {
+			if (disposed) return;
+			const entry = entries[entries.length - 1];
+			if (entry) latestBoxSize = entry.borderBoxSize?.[0] ?? entry.contentBoxSize?.[0] ?? latestBoxSize;
+			if (rafId === null) rafId = requestAnimationFrame(publishFrame);
+		};
+		const doc = target.ownerDocument;
+		if (target === doc.body || target === doc.documentElement) console.warn(`[view-anchor] size-anchor: <${target === doc.body ? "body" : "html"}>'s ${axis} size is the view size, not content size. The size anchor will never shrink to content; measure a shrink-to-fit wrapper instead.`);
+		let removeAbortListener = () => {};
+		const dispose = () => {
+			if (disposed) return;
+			disposed = true;
+			removeAbortListener();
+			removeAbortListener = () => {};
+			if (rafId !== null) {
+				cancelAnimationFrame(rafId);
+				rafId = null;
+			}
+			if (observer) {
+				observer.disconnect();
+				observer = null;
+			}
+			publish = NOOP_PUBLISH;
+			latestBoxSize = null;
+			lastPublished = null;
+		};
+		if (opts.signal?.aborted) dispose();
+		else {
+			removeAbortListener = watchAbort(opts.signal, dispose);
+			observer = new ResizeObserver(onResize);
+			observer.observe(target);
+		}
+		return {
+			update(next) {
+				if (disposed) return;
+				publish = next.publish;
+				dedupe = next.dedupe ?? true;
+				lastPublished = null;
+				const extent = measure();
+				if (extent !== null) publishExtent(extent);
+			},
+			dispose
+		};
+	}
+	//#endregion
+	exports.DEFAULT_HOLD_SELECTOR = DEFAULT_HOLD_SELECTOR;
+	exports.createSizeAnchor = createSizeAnchor;
 	exports.createViewAnchor = createViewAnchor;
 	exports.measurePlacement = measurePlacement;
 	return exports;
@@ -725,74 +857,232 @@ var __viewAnchorCore = (function(exports) {
 </script>
 
 <script>
-  const { createViewAnchor } = __viewAnchorCore
+  const { createViewAnchor, createSizeAnchor } = __viewAnchorCore
 
-  const ZERO = { x: 0, y: 0, width: 0, height: 0 }
+  const $ = (id) => document.getElementById(id)
+  const deck      = $('deck')
+  const scene     = $('scene')
+  const sidebar   = $('sidebar')
+  const header    = $('page-header')
+  const scroller  = $('scroller')
+  const slotA     = $('slot-a')
+  const slotB     = $('slot-b')
+  const bItems    = $('b-items')
+  const hideA     = $('hide-a')
+  const readout   = $('readout')
+  const visibleEl = $('visible')
+  const geometryEl = $('follow-geometry')
+  const scrollEl  = $('follow-scroll')
+  const explodeEl = $('explode')
 
-  const deck        = document.getElementById('deck')
-  const placeholder = document.getElementById('placeholder')
-  const follower    = document.getElementById('follower')
-  const pillar      = document.getElementById('pillar')
-  const presentEl   = document.getElementById('present')
-  const splitEl     = document.getElementById('split')
-  const explodeEl   = document.getElementById('explode')
-  const scene       = document.getElementById('scene')
-  const readout     = document.getElementById('readout')
+  const HEADER_OPEN = 44
+  const HEADER_COLLAPSED = 24
+  const PILLAR_HEIGHT = 90
+  const DECK_FIT_WIDTH = 640
+  const SCENE_HEIGHT = 440
 
-  // The placeholder's rect inside the deck (accumulated along the offsetParent
-  // chain, independent of the 3D transform) — flat or tilted, the anchored view
-  // stays registered directly above the placeholder.
+  // An element's rect in the deck's own coordinates: offsets along the
+  // offsetParent chain (plus each parent's border), minus ancestor scroll.
+  // The published bounds are viewport coordinates, which a tilted deck
+  // distorts; a real host would use them directly.
   function deckLocalRect(el) {
-    let x = 0, y = 0, n = el
-    while (n && n !== deck) { x += n.offsetLeft; y += n.offsetTop; n = n.offsetParent }
+    let x = 0, y = 0
+    for (let n = el; n && n !== deck; n = n.offsetParent) {
+      x += n.offsetLeft; y += n.offsetTop
+      const p = n.offsetParent
+      if (p && p !== deck) { x += p.clientLeft; y += p.clientTop }
+    }
+    for (let p = el.parentElement; p && p !== deck; p = p.parentElement) {
+      x -= p.scrollLeft; y -= p.scrollTop
+    }
     return { x, y, width: el.offsetWidth, height: el.offsetHeight }
   }
 
-  // The host-side publish — view-anchor hands it the measured rect. A real app
-  // application code would use the bounds here; this demo places the view in the
-  // deck's local coordinates.
-  function publish(bounds) {
-    if (bounds.width === 0 || bounds.height === 0) {
-      follower.classList.add('collapsed')
-      renderReadout(ZERO, false)
-      return
+  // ---- readout ----
+  const lines = { a: '', b: '', size: '', last: '' }
+  function renderReadout() {
+    readout.innerHTML = [lines.a, lines.b, lines.size, lines.last].join('\n')
+  }
+  function note(text) {
+    lines.last = '<span class="k">// last: ' + text + '</span>'
+    renderReadout()
+  }
+  function describe(name, placement, r) {
+    const head = '<span class="k">' + name + '.publish</span>('
+    if (!placement.visible) return head + '{ visible: false })'
+    return head + '{ visible: true, x:' + r.x + ', y:' + r.y + ', w:' + r.width + ', h:' + r.height + ' })' +
+      '  <span class="k">// deck-local</span>'
+  }
+
+  // ---- DOM → surface ----
+  // The page's publish for one surface: show or hide it, move it over its
+  // slot, and clip it to the page's scroll viewport.
+  function placeSurface(name, slot) {
+    const surface = $('surface-' + name)
+    const pillar = $('pillar-' + name)
+    return (placement) => {
+      lines[name] = describe(name.toUpperCase(), placement, placement.visible && deckLocalRect(slot))
+      renderReadout()
+      if (!placement.visible) {
+        surface.classList.add('off')
+        pillar.classList.add('off')
+        return
+      }
+      const r = deckLocalRect(slot)
+      const view = deckLocalRect(scroller)
+      const top = Math.max(0, view.y - r.y)
+      const left = Math.max(0, view.x - r.x)
+      const bottom = Math.max(0, r.y + r.height - (view.y + view.height))
+      const right = Math.max(0, r.x + r.width - (view.x + view.width))
+      const clippedAway = top + bottom >= r.height || left + right >= r.width
+      surface.classList.toggle('off', clippedAway)
+      pillar.classList.toggle('off', clippedAway || top > 0 || bottom > 0)
+      surface.style.left   = r.x + 'px'
+      surface.style.top    = r.y + 'px'
+      surface.style.width  = r.width + 'px'
+      surface.style.height = r.height + 'px'
+      surface.style.clipPath = 'inset(' + top + 'px ' + right + 'px ' + bottom + 'px ' + left + 'px)'
+      pillar.style.left   = (r.x + r.width / 2) + 'px'
+      pillar.style.top    = (r.y + r.height / 2) + 'px'
+      pillar.style.height = PILLAR_HEIGHT + 'px'
     }
-    follower.classList.remove('collapsed')
-    const r = deckLocalRect(placeholder)
-    follower.style.left   = r.x + 'px'
-    follower.style.top    = r.y + 'px'
-    follower.style.width  = r.width + 'px'
-    follower.style.height = r.height + 'px'
-    // Pillar stands on the placeholder's centerline, rising along Z to the
-    // view's height (120px).
-    pillar.style.left = (r.x + r.width / 2) + 'px'
-    pillar.style.top  = (r.y + r.height / 2) + 'px'
-    pillar.style.height = '120px'
-    renderReadout(r, true)
   }
 
-  function renderReadout(b, present) {
-    readout.innerHTML =
-      '<span class="k">publish</span>({ x:' + b.x + ', y:' + b.y +
-      ', w:' + b.width + ', h:' + b.height + ' })' +
-      (present ? '' : '  <span class="k">// detached</span>')
+  const followOptions = () => ({
+    visible: visibleEl.checked,
+    followGeometry: geometryEl.checked,
+    followScroll: scrollEl.checked,
+  })
+  const publishA = placeSurface('a', slotA)
+  const publishB = placeSurface('b', slotB)
+  // holdSelector is left at its default, '[role="separator"]'.
+  const anchorA = createViewAnchor(slotA, { ...followOptions(), treatZeroAreaAsHidden: true, publish: publishA })
+  const anchorB = createViewAnchor(slotB, { ...followOptions(), publish: publishB })
+  const pulseAll = () => { anchorA.pulse(300); anchorB.pulse(300) }
+
+  // ---- surface → DOM ----
+  // Surface B owns its content. Its items wrap to whatever width the page
+  // gave it; the size anchor reports the resulting height, and the page sizes
+  // slot B to match. That moves slot A without resizing it, so the page
+  // pulses A.
+  const MAX_ITEMS = 24
+  let itemCount = 5
+  function renderItems() {
+    bItems.innerHTML = Array.from({ length: itemCount }, (_, i) => '<b>item ' + (i + 1) + '</b>').join('')
   }
-
-  // Start the real anchor; split resizes are driven by view-anchor's own ResizeObserver.
-  const handle = createViewAnchor(placeholder, { present: presentEl.checked, publish })
-
-  presentEl.addEventListener('change', () => {
-    handle.update({ present: presentEl.checked, publish })
+  renderItems()
+  createSizeAnchor($('b-content'), {
+    axis: 'block',
+    publish: ({ axis, extent }) => {
+      slotB.style.height = extent + 'px'
+      anchorA.pulse(300)
+      lines.size = '<span class="rev">B.size.publish</span>({ axis: \'' + axis + '\', extent: ' + extent + ' })' +
+        '  <span class="k">// page sets slot B to this height</span>'
+      renderReadout()
+    },
   })
-  splitEl.addEventListener('input', () => {
-    placeholder.style.flexBasis = splitEl.value + '%'
+  // At either limit the count does not change, so nothing is re-rendered
+  // and the readout keeps its last real event.
+  $('b-more').addEventListener('click', () => {
+    if (itemCount === MAX_ITEMS) return
+    itemCount = Math.min(MAX_ITEMS, itemCount + 3)
+    renderItems()
+    note('surface B grew its content → size publish → slot B resized → pulse() on A')
   })
-  // Explode defaults ON: apply the exploded pose at boot — uncheck to see the flat view.
+  $('b-less').addEventListener('click', () => {
+    if (itemCount === 0) return
+    itemCount = Math.max(0, itemCount - 3)
+    renderItems()
+    note('surface B shrank its content → size publish → slot B resized → pulse() on A')
+  })
+
+  // ---- direct manipulation on the page ----
+  // Pointer deltas are in screen space; on a tilted deck they are mapped back
+  // into the deck plane with an affine fit taken from three probe points.
+  function screenToDeck() {
+    const c = (id) => { const b = $(id).getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 } }
+    const o = c('probe-o'), px = c('probe-x'), py = c('probe-y')
+    const a = (px.x - o.x) / 100, b = (py.x - o.x) / 100
+    const cc = (px.y - o.y) / 100, d = (py.y - o.y) / 100
+    const det = a * d - b * cc || 1
+    return (dx, dy) => ({ x: (d * dx - b * dy) / det, y: (-cc * dx + a * dy) / det })
+  }
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
+  function makeDraggable(handle, read, apply) {
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      handle.setPointerCapture(e.pointerId)
+      handle.classList.add('dragging')
+      const toDeck = screenToDeck()
+      const start = read()
+      const sx = e.clientX, sy = e.clientY
+      const move = (ev) => apply(start, toDeck(ev.clientX - sx, ev.clientY - sy))
+      const end = () => {
+        handle.classList.remove('dragging')
+        handle.removeEventListener('pointermove', move)
+        handle.removeEventListener('pointerup', end)
+        handle.removeEventListener('pointercancel', end)
+      }
+      handle.addEventListener('pointermove', move)
+      handle.addEventListener('pointerup', end)
+      handle.addEventListener('pointercancel', end)
+    })
+  }
+  makeDraggable($('split-side'), () => sidebar.offsetWidth, (start, d) => {
+    sidebar.style.width = clamp(Math.round(start + d.x), 40, 300) + 'px'
+    note('vertical splitter: slots resized → ResizeObserver')
+  })
+  makeDraggable($('split-header'), () => header.offsetHeight, (start, d) => {
+    header.style.height = clamp(Math.round(start + d.y), HEADER_COLLAPSED, 120) + 'px'
+    note('header edge: slots moved, same size → followGeometry while the separator is held')
+  })
+  scroller.addEventListener('scroll', () => {
+    note(scrollEl.checked ? 'scroll → followScroll re-measured' : 'scroll with followScroll off → surfaces left behind')
+  }, { passive: true })
+  $('collapse').addEventListener('click', (e) => {
+    const collapsed = header.offsetHeight <= HEADER_COLLAPSED
+    header.style.height = (collapsed ? HEADER_OPEN : HEADER_COLLAPSED) + 'px'
+    e.currentTarget.textContent = collapsed ? 'collapse' : 'expand'
+    pulseAll()
+    note('header ' + (collapsed ? 'expanded' : 'collapsed') + ' by the page → pulse()' +
+      (geometryEl.checked ? '' : ' (no-op: followGeometry is off)'))
+  })
+  hideA.addEventListener('click', () => {
+    const hidden = slotA.style.display === 'none'
+    slotA.style.display = hidden ? '' : 'none'
+    hideA.textContent = hidden ? 'hide A' : 'show A'
+    note(hidden ? 'slot A shown again' : 'slot A display: none → treatZeroAreaAsHidden publishes { visible: false }')
+  })
+
+  // ---- scene controls ----
+  function updateAnchors() {
+    // update() applies a full configuration — an omitted option resets to
+    // its default, so slot A's treatZeroAreaAsHidden must be re-passed on
+    // every call or the "hide A" demo would silently stop working.
+    anchorA.update({ ...followOptions(), treatZeroAreaAsHidden: true, publish: publishA })
+    anchorB.update({ ...followOptions(), publish: publishB })
+  }
+  visibleEl.addEventListener('change', updateAnchors)
+  geometryEl.addEventListener('change', updateAnchors)
+  scrollEl.addEventListener('change', updateAnchors)
+
+  // Narrow screens: scale the whole deck down (offsets and probes are
+  // unaffected, so tracking and drag mapping keep working).
+  function fitScene() {
+    const s = Math.min(1, scene.clientWidth / DECK_FIT_WIDTH)
+    deck.style.scale = String(s)
+    scene.style.height = Math.round(SCENE_HEIGHT * Math.max(s, 0.7)) + 'px'
+  }
+  fitScene()
+  window.addEventListener('resize', fitScene)
+
+  // The 3D view is on by default; uncheck it to see the page flat.
   if (explodeEl.checked) scene.classList.add('exploded')
-
   explodeEl.addEventListener('change', () => {
     scene.classList.toggle('exploded', explodeEl.checked)
   })
+  note('drag, scroll or click the page')
 </script>
 </body>
 </html>
