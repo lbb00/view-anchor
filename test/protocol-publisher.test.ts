@@ -444,11 +444,56 @@ describe('createGeometryBatcher', () => {
     expect(messages.every((message) => message.generation === 2)).toBe(true)
   })
 
-  it('flushes one late size promptly after 100k placement anchors have settled', () => {
+  it('flushes a late message without walking every anchor it has seen', () => {
     const send = vi.fn<(batch: GeometryBatch) => boolean | void>()
-    const batcher = createGeometryBatcher(send)
-    const count = 100_000
-    for (let index = 0; index < count; index++) {
+    // A flush must cost what the pending queue costs, not what the batcher has
+    // ever seen: one lookup per pending message and no walk over the anchor
+    // map. Counting the reads states that directly, which a wall-clock
+    // comparison cannot do reliably at this scale.
+    const mapReads = { get: 0, walks: 0 }
+    class TrackedMap<K, V> extends Map<K, V> {
+      override get(key: K) {
+        mapReads.get++
+        return super.get(key)
+      }
+      override values() {
+        mapReads.walks++
+        return super.values()
+      }
+      override keys() {
+        mapReads.walks++
+        return super.keys()
+      }
+      override entries() {
+        mapReads.walks++
+        return super.entries()
+      }
+      override forEach(
+        callback: (value: V, key: K, map: Map<K, V>) => void,
+        thisArg?: unknown,
+      ): void {
+        mapReads.walks++
+        super.forEach(callback, thisArg)
+      }
+      override [Symbol.iterator]() {
+        mapReads.walks++
+        return super[Symbol.iterator]()
+      }
+    }
+
+    const nativeMap = globalThis.Map
+    // The batcher builds its anchor map at creation, so the substitution only
+    // has to cover that one call.
+    const batcher = ((): ReturnType<typeof createGeometryBatcher> => {
+      globalThis.Map = TrackedMap as unknown as MapConstructor
+      try {
+        return createGeometryBatcher(send)
+      } finally {
+        globalThis.Map = nativeMap
+      }
+    })()
+
+    for (let index = 0; index < 50; index++) {
       batcher.publish({
         v: 1,
         kind: 'placement',
@@ -459,6 +504,8 @@ describe('createGeometryBatcher', () => {
       })
     }
     flushMicrotasks()
+    expect(send).toHaveBeenCalledTimes(1)
+
     const lateSize: GeometryMessage = {
       v: 1,
       kind: 'size',
@@ -467,28 +514,13 @@ describe('createGeometryBatcher', () => {
       seq: 1,
       size: { axis: 'block', extent: 20 },
     }
-
     batcher.publish(lateSize)
-    const startedAt = performance.now()
-    expect(batcher.flush()).toBe(true)
-    const lateFlushMs = performance.now() - startedAt
-    expect(send.mock.calls.at(-1)![0].messages).toEqual([lateSize])
-    expect(lateFlushMs).toBeLessThan(25)
+    mapReads.get = 0
+    mapReads.walks = 0
 
-    const fresh = createGeometryBatcher(() => true)
-    const retainedStartedAt = performance.now()
-    for (let index = 0; index < 40; index++) {
-      batcher.publish({ ...lateSize, anchorId: `late-${index}` })
-      batcher.flush()
-    }
-    const retainedMs = performance.now() - retainedStartedAt
-    const freshStartedAt = performance.now()
-    for (let index = 0; index < 40; index++) {
-      fresh.publish({ ...lateSize, anchorId: `fresh-${index}` })
-      fresh.flush()
-    }
-    const freshMs = performance.now() - freshStartedAt
-    expect(retainedMs).toBeLessThan(freshMs * 8 + 2)
+    expect(batcher.flush()).toBe(true)
+    expect(send.mock.calls.at(-1)![0].messages).toEqual([lateSize])
+    expect(mapReads).toEqual({ get: 1, walks: 0 })
   })
 })
 
