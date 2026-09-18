@@ -35,6 +35,17 @@ try {
     '--strip-components=1',
   ])
 
+  // Every compiled module must still have a source file: a build that does not
+  // start from an empty dist would otherwise ship modules deleted from src.
+  const shippedSources = new Set(readdirSync(join(packageDirectory, 'src')))
+  const staleOutputs = readdirSync(join(packageDirectory, 'dist')).filter((name) => {
+    const module = name.replace(/\.(d\.ts|js)(\.map)?$/, '')
+    return !shippedSources.has(`${module}.ts`)
+  })
+  if (staleOutputs.length > 0) {
+    throw new Error(`dist contains outputs without a source file: ${staleOutputs.join(', ')}`)
+  }
+
   const protocol = runNode(`
     const protocol = await import('view-anchor/protocol')
     const required = [
@@ -52,6 +63,19 @@ try {
     throw new Error(`The protocol package entry must load without React:\n${protocol.stderr}`)
   }
 
+  // The root entry must not depend on React (useViewAnchor lives only in the
+  // React entry), so it is checked here, before react/index.js exists.
+  const core = runNode(`
+    const core = await import('view-anchor')
+    const required = ['createViewAnchor', 'measurePlacement', 'createSizeAnchor']
+    const missing = required.filter((name) => !(name in core))
+    if (missing.length > 0) throw new Error('Missing core exports: ' + missing.join(', '))
+    if ('useViewAnchor' in core) throw new Error('The root entry must not export useViewAnchor')
+  `)
+  if (core.status !== 0) {
+    throw new Error(`The root package entry must load without React:\n${core.stderr}`)
+  }
+
   const reactDirectory = join(consumerDirectory, 'node_modules', 'react')
   mkdirSync(reactDirectory)
   writeFileSync(join(reactDirectory, 'package.json'), '{"type":"module"}')
@@ -60,28 +84,14 @@ try {
     `
     export const useCallback = (callback) => callback
     export const useEffect = () => undefined
+    export const useInsertionEffect = () => undefined
     export const useRef = (value) => ({ current: value })
+    export const version = '18.3.1'
   `,
   )
 
-  const core = runNode(`
-    const core = await import('view-anchor')
-    const required = [
-      'createViewAnchor',
-      'createPlacementAnchor',
-      'measurePlacement',
-      'createSizeAdvertiser',
-      'useViewAnchor',
-    ]
-    const missing = required.filter((name) => !(name in core))
-    if (missing.length > 0) throw new Error('Missing core exports: ' + missing.join(', '))
-  `)
-  if (core.status !== 0) {
-    throw new Error(`The core package entry must load with React installed:\n${core.stderr}`)
-  }
-
   const react = runNode(
-    "const react = await import('view-anchor/react'); if (typeof react.useViewAnchor !== 'function') throw new Error('Missing React export')",
+    "const react = await import('view-anchor/react'); if (typeof react.useViewAnchor !== 'function') throw new Error('Missing useViewAnchor')",
   )
   if (react.status !== 0) {
     throw new Error(`The React package entry must load with React installed:\n${react.stderr}`)
@@ -91,11 +101,77 @@ try {
   writeFileSync(
     typecheckFile,
     `
-    import { useViewAnchor } from 'view-anchor'
-    import type { UseViewAnchorOptions, ViewAnchorRef } from 'view-anchor'
-    const options = { present: true, publish: () => undefined } satisfies UseViewAnchorOptions
-    const ref: ViewAnchorRef = useViewAnchor(options)
+    import { createViewAnchor, createSizeAnchor, measurePlacement } from 'view-anchor'
+    import type {
+      Bounds,
+      Placement,
+      Publisher,
+      PublishResult,
+      ViewAnchorOptions,
+      ViewAnchorHandle,
+      SizeAxis,
+      SizeMeasurement,
+      SizeAnchorOptions,
+      SizeAnchorHandle,
+    } from 'view-anchor'
+
+    const bounds: Bounds = { x: 0, y: 0, width: 1, height: 1 }
+    const placement: Placement = measurePlacement(document.body)
+    void bounds
+    const publishResult: PublishResult = undefined
+    void publishResult
+    const publishPlacement: Publisher<Placement> = () => undefined
+    void publishPlacement
+
+    const anchorOptions = { visible: true, publish: publishPlacement } satisfies ViewAnchorOptions
+    const anchorHandle: ViewAnchorHandle = createViewAnchor(document.body, anchorOptions)
+    anchorHandle.dispose()
+
+    const axis: SizeAxis = 'block'
+    const publishSize: Publisher<SizeMeasurement> = () => undefined
+    const sizeOptions = { axis, publish: publishSize } satisfies SizeAnchorOptions
+    const sizeHandle: SizeAnchorHandle = createSizeAnchor(document.body, sizeOptions)
+    sizeHandle.update({ publish: publishSize })
+    sizeHandle.dispose()
+    void placement
+
+    import { useViewAnchor } from 'view-anchor/react'
+    import type { UseViewAnchorOptions, ViewAnchorRef } from 'view-anchor/react'
+    const reactOptions = { visible: true, publish: publishPlacement } satisfies UseViewAnchorOptions
+    const ref: ViewAnchorRef = useViewAnchor(reactOptions)
     void ref
+
+    import {
+      GEOMETRY_PROTOCOL_VERSION,
+      decodeGeometryWireValue,
+      createGeometrySequenceGuard,
+      createGeometryBatcher,
+      createPlacementMessagePublisher,
+      createSizeMessagePublisher,
+    } from 'view-anchor/protocol'
+    import type {
+      GeometrySequenceGuard,
+      GeometryBatcher,
+      GeometryBatcherOptions,
+      GeometryBatchSender,
+      GeometryMessageSender,
+    } from 'view-anchor/protocol'
+    void GEOMETRY_PROTOCOL_VERSION
+    void decodeGeometryWireValue
+    void createGeometrySequenceGuard
+    void createGeometryBatcher
+    void createPlacementMessagePublisher
+    void createSizeMessagePublisher
+    declare const guard: GeometrySequenceGuard
+    declare const batcher: GeometryBatcher
+    declare const batcherOptions: GeometryBatcherOptions
+    declare const batchSend: GeometryBatchSender
+    declare const send: GeometryMessageSender
+    void guard
+    void batcher
+    void batcherOptions
+    void batchSend
+    void send
   `,
   )
   execFileSync(
@@ -117,7 +193,7 @@ try {
   )
 
   console.log(
-    'Package entry checks passed: protocol loads without React; root and React entries keep legacy React exports.',
+    'Package entry checks passed: protocol and root entries load without React; React entry loads with React installed and exports useViewAnchor.',
   )
 } finally {
   rmSync(tempRoot, { recursive: true, force: true })

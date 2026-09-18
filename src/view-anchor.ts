@@ -1,15 +1,15 @@
-import type { Bounds, Placement, Publisher, ViewAnchorOptions, ViewAnchorHandle } from './types.js'
+import type { Bounds, Placement, Publisher } from './types.js'
 import { watchAbort } from './abort.js'
-
-const ZERO: Bounds = { x: 0, y: 0, width: 0, height: 0 }
 
 // Replaces a disposed instance's publish callback so a retained handle does
 // not keep the caller's original callback (and whatever it captured) alive.
 const NOOP_PUBLISH = (): false => false
 
-// Round to integer pixels. Width and height are clamped to >= 0 (0 represents
-// a collapsed rect). Coordinates (x, y) can be negative when an element is
-// scrolled out of view; clamping them to 0 would pin the view to the screen edge.
+// Default holdSelector: omitting the option keeps tracking presses on a role=separator splitter.
+export const DEFAULT_HOLD_SELECTOR = '[role="separator"]'
+
+// Round to integer pixels. Width and height are clamped to >= 0; x and y can be
+// negative, so a view scrolled out of sight is not pinned to the screen edge.
 const clampRect = (r: { x: number; y: number; width: number; height: number }): Bounds => ({
   x: Math.round(r.x),
   y: Math.round(r.y),
@@ -17,180 +17,77 @@ const clampRect = (r: { x: number; y: number; width: number; height: number }): 
   height: Math.max(0, Math.round(r.height)),
 })
 
-/**
- * Bind a native view or external surface to the geometry of `target`.
- *
- * - `present === true`: measures `target.getBoundingClientRect()` and publishes
- *   immediately, then re-measures synchronously on ResizeObserver and window resize.
- * - `present === false`: publishes a zero rect ({ x: 0, y: 0, width: 0, height: 0 })
- *   and stops observing.
- * - `update(opts)`: re-applies options immediately.
- * - `dispose()`: stops observing and prevents any further publishes.
- *
- * Synchronous publishing: measurement and publishing occur directly in the
- * observer tick. Applying geometry outside the DOM may already be delayed;
- * adding requestAnimationFrame would add another frame of visual lag during drag
- * operations. High-frequency updates are deduplicated against the last accepted rect.
- */
-export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): ViewAnchorHandle {
-  let present = opts.present
-  let publish = opts.publish
-  let observer: ResizeObserver | null = null
-  // Local, clearable alias for the `target` parameter so dispose() can drop
-  // the strong reference without widening the public parameter's type.
-  let targetRef: HTMLElement | null = target
-  // Last rect sent to publish. Reset on apply() so state changes (such as zoom)
-  // force a re-publish even if the geometry did not change.
-  let lastPublished: Bounds | null = null
-  let publicationRevision = 0
-  let disposed = false
-
-  const measure = (): Bounds | null => {
-    const r = targetRef!.getBoundingClientRect()
-    // Drop ticks with non-finite values (NaN / Infinity are not usable geometry).
-    if (
-      !Number.isFinite(r.left) ||
-      !Number.isFinite(r.top) ||
-      !Number.isFinite(r.width) ||
-      !Number.isFinite(r.height)
-    )
-      return null
-    return clampRect({ x: r.left, y: r.top, width: r.width, height: r.height })
-  }
-
-  const sameRect = (a: Bounds, b: Bounds): boolean =>
-    a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
-
-  const publishCandidate = (candidate: Bounds): boolean => {
-    const previous = lastPublished
-    const attempt = ++publicationRevision
-    lastPublished = candidate
-    try {
-      const accepted = publish(candidate) !== false
-      // A reentrant dispose() during publish() already cleared lastPublished;
-      // do not resurrect the pre-dispose value over that terminal state.
-      if (!accepted && publicationRevision === attempt && !disposed) lastPublished = previous
-      return accepted
-    } catch (error) {
-      if (publicationRevision === attempt && !disposed) lastPublished = previous
-      throw error
-    }
-  }
-
-  // Measure and publish synchronously on each observer tick.
-  // Drops duplicate rects to coalesce same-frame resize events.
-  const emit = (): void => {
-    if (disposed || !present) return
-    const m = measure()
-    if (!m) return
-    if (lastPublished && sameRect(lastPublished, m)) return
-    publishCandidate(m)
-  }
-
-  const startObserving = (): void => {
-    if (observer) return
-    observer = new ResizeObserver(emit)
-    observer.observe(targetRef!)
-    window.addEventListener('resize', emit)
-  }
-
-  const stopObserving = (): void => {
-    if (observer) {
-      observer.disconnect()
-      observer = null
-    }
-    window.removeEventListener('resize', emit)
-  }
-
-  // Apply current options synchronously. Reset lastPublished so state changes
-  // always re-publish even if dimensions have not changed.
-  const apply = (): void => {
-    lastPublished = null
-    if (present) {
-      startObserving()
-      const measured = measure()
-      if (measured) publishCandidate(measured)
-    } else {
-      stopObserving()
-      publishCandidate(ZERO)
-    }
-  }
-
-  let removeAbortListener = (): void => {}
-
-  const dispose = (): void => {
-    if (disposed) return
-    disposed = true
-    removeAbortListener()
-    removeAbortListener = (): void => {}
-    stopObserving()
-    targetRef = null
-    publish = NOOP_PUBLISH
-    lastPublished = null
-  }
-
-  if (opts.signal?.aborted) dispose()
-  else {
-    removeAbortListener = watchAbort(opts.signal, dispose)
-    apply()
-  }
-
-  return {
-    update(next: ViewAnchorOptions): void {
-      if (disposed) return
-      publish = next.publish
-      present = next.present
-      apply()
-    },
-    dispose,
-  }
-}
-
-// --- Explicit Placement API ---
-
-export interface PlacementAnchorOptions {
+export interface ViewAnchorOptions {
   /**
    * Whether the native view should be visible. When true, publishes
-   * { visible: true, bounds }; when false, publishes { visible: false }.
+   * { visible: true, bounds }; when false, publishes { visible: false } and
+   * stops observing, so a rejected hidden placement is only sent again by the
+   * next update().
    */
   visible: boolean
   /** Receives each explicit Placement. */
   publish: Publisher<Placement>
-  /** Stops this anchor when aborted. An already-aborted signal starts no work. */
+  /**
+   * Stops this anchor when aborted. An already-aborted signal starts no work.
+   * Read once at creation only — update()'s type does not accept this field.
+   */
   signal?: AbortSignal
   /**
    * When true, targets with zero area (such as display: none or unmounted elements)
    * publish { visible: false } instead of { visible: true, bounds: 0x0 }, and an
    * IntersectionObserver tracks display: none transitions. Default is false.
-   * Sticky across update(): omitting it preserves the current setting.
+   * update() applies the same default: omitting it resets to false.
    */
-  guardDisplayNone?: boolean
+  treatZeroAreaAsHidden?: boolean
   /**
    * When true, listens for capture-phase scroll events on window to re-measure
    * when an ancestor container scrolls. Default is false.
-   * Sticky across update(): omitting it preserves the current setting.
+   * update() applies the same default: omitting it resets to false.
    */
   followScroll?: boolean
   /**
    * When true, polls geometry per animation frame during active motion (scrolls,
-   * splitter dragging, or pulse()) and auto-closes when steady. Zero idle overhead.
-   * Sticky across update(): omitting it preserves the current setting.
+   * splitter dragging, or pulse()) and auto-closes when steady.
+   * update() applies the same default: omitting it resets to false.
    */
   followGeometry?: boolean
+  /**
+   * CSS selector for the press-and-hold target that keeps followGeometry open
+   * for the duration of a pointer press. Only meaningful when followGeometry
+   * is true; the pointer listeners are mounted only while both are set. A capture-phase pointerdown whose
+   * target matches `closest(holdSelector)` opens frame following until release.
+   * Default is `[role="separator"]`. Pass null to disable. update() applies
+   * the same default when omitted. An invalid selector throws synchronously
+   * (SyntaxError) before any option is applied.
+   */
+  holdSelector?: string | null
+  /**
+   * When true (the default), a measurement identical to the last accepted
+   * Placement is not published again. When false, every usable frame publishes
+   * even if the Placement is unchanged; the steady-frame close and the
+   * invalid/hidden frame caps still compare values either way. Hidden frames
+   * are never published by frame following regardless of this option. Omitting
+   * it in update() resets to true.
+   */
+  dedupe?: boolean
 }
 
-export interface PlacementAnchorHandle {
+export interface ViewAnchorHandle {
   /**
-   * Apply new options and re-publish immediately.
-   * guardDisplayNone, followScroll, and followGeometry are sticky: omitting a flag
-   * preserves its current value. Pass an explicit false to disable one.
+   * Apply a full set of options and re-publish immediately. Omitted options
+   * reset to defaults: treatZeroAreaAsHidden/followScroll/followGeometry → false,
+   * holdSelector → `[role="separator"]` (pass null to disable), dedupe → true.
+   * `signal` is not accepted here — it cannot be changed after creation.
    */
-  update(opts: PlacementAnchorOptions): void
+  update(opts: Omit<ViewAnchorOptions, 'signal'>): void
   /** Stop observing; never publish again. */
   dispose(): void
   /**
-   * Open the animation frame sentinel window. Auto-closes once stable
+   * Open a frame-following window. Auto-closes once stable
    * or after durationMs. No-op if followGeometry is false.
+   * durationMs is an upper bound, not a minimum: the window closes as soon as
+   * two frames measure the same rect, so a transition that starts slowly
+   * (sub-pixel movement in its first frames) may not be followed to the end.
    */
   pulse(durationMs?: number): void
 }
@@ -221,22 +118,30 @@ const samePlacement = (a: Placement, b: Placement): boolean => {
 }
 
 /**
- * Explicit-visibility variant of createViewAnchor.
+ * Bind a native view or external surface to the geometry of `target`.
+ *
+ * When `visible === true`, publishes { visible: true, bounds } immediately,
+ * then re-measures synchronously on ResizeObserver and window resize.
+ * When `visible === false`, publishes { visible: false } and stops observing.
+ * Publishes are deduplicated against the last accepted Placement by default
+ * (see the `dedupe` option).
  */
-export function createPlacementAnchor(
-  target: HTMLElement,
-  opts: PlacementAnchorOptions,
-): PlacementAnchorHandle {
+export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): ViewAnchorHandle {
+  // A non-empty holdSelector must be a syntactically valid CSS selector
+  // (matches() throws SyntaxError otherwise). Validate before any state is
+  // created so a bad selector never partially applies.
+  if (opts.holdSelector) target.matches(opts.holdSelector)
   let visible = opts.visible
   let publish = opts.publish
-  let guardDisplayNone = opts.guardDisplayNone ?? false
+  let treatZeroAreaAsHidden = opts.treatZeroAreaAsHidden ?? false
   let followScroll = opts.followScroll ?? false
   let followGeometry = opts.followGeometry ?? false
-  // Local, clearable alias for the `target` parameter so dispose() can drop
-  // the strong reference without widening the public parameter's type.
+  let holdSelector = opts.holdSelector === undefined ? DEFAULT_HOLD_SELECTOR : opts.holdSelector
+  let dedupe = opts.dedupe ?? true
+  // Clearable alias so dispose() can drop the reference.
   let targetRef: HTMLElement | null = target
   let observer: ResizeObserver | null = null
-  let io: IntersectionObserver | null = null
+  let intersectionObserver: IntersectionObserver | null = null
   let scrollListening = false
   let geometryListening = false
   const capture = { capture: true }
@@ -245,21 +150,26 @@ export function createPlacementAnchor(
   let publicationRevision = 0
   let disposed = false
 
-  // --- Windowed RAF geometry sentinel state ---
-  // The sentinel polls per frame during active movement and auto-closes once
+  // --- Frame following (followGeometry) state ---
+  // Frame following polls per frame during active movement and auto-closes once
   // geometry settles. While closed, no frame is scheduled (zero idle overhead).
   let rafId: number | null = null
   let steadyFrames = 0
   const STEADY_CLOSE_FRAMES = 2
   const MAX_HIDDEN_FOLLOW_FRAMES = 30
   const MAX_INVALID_FOLLOW_FRAMES = 30
+  let hiddenFrames = 0
   let invalidFrames = 0
-  // True while a [role="separator"] splitter drag is held.
-  let pointerHeld = false
-  let activePointerId: number | undefined | null = null
-  let sentinelDeadline: number | null = null
+  // Pointer ids currently matching holdSelector and held down. Non-empty
+  // keeps frame following open regardless of deadline or steady frames.
+  const heldPointerIds = new Set<number>()
+  // The rect measured on the previous followed frame, independent of whether
+  // publish() accepted it. Drives the steady/moving decision so a publish()
+  // that keeps rejecting an unchanged measurement cannot keep resetting it.
+  let lastFramePlacement: Placement | null = null
+  let followDeadline: number | null = null
 
-  const computePlacement = (): Placement | null => {
+  const measureTarget = (): Placement | null => {
     const p = measurePlacement(targetRef!)
     if (
       p.visible &&
@@ -269,13 +179,13 @@ export function createPlacementAnchor(
         !Number.isFinite(p.bounds.height))
     )
       return null
-    if (guardDisplayNone && p.visible && (p.bounds.width === 0 || p.bounds.height === 0)) {
+    if (treatZeroAreaAsHidden && p.visible && (p.bounds.width === 0 || p.bounds.height === 0)) {
       return { visible: false }
     }
     return p
   }
 
-  const publishCandidate = (candidate: Placement): boolean => {
+  const publishPlacement = (candidate: Placement): boolean => {
     const previous = lastPublished
     const attempt = ++publicationRevision
     lastPublished = candidate
@@ -291,121 +201,127 @@ export function createPlacementAnchor(
     }
   }
 
-  const emit = (): void => {
+  const measureAndPublish = (): void => {
     if (disposed || !visible) return
-    const p = computePlacement()
+    const p = measureTarget()
     if (!p) return
-    if (lastPublished && samePlacement(lastPublished, p)) return
-    publishCandidate(p)
+    if (dedupe && lastPublished && samePlacement(lastPublished, p)) return
+    publishPlacement(p)
   }
 
-  const shouldCloseOnHiddenPoll = (): boolean => {
-    if (lastPublished?.visible === false) return true
-    return steadyFrames++ >= MAX_HIDDEN_FOLLOW_FRAMES
+  // Polls again next frame if following is still wanted after this frame's work.
+  const scheduleFollowFrame = (): void => {
+    if (!disposed && visible && followGeometry) rafId = requestAnimationFrame(followFrame)
+    else followDeadline = null
   }
 
-  const sentinelFrame = (): void => {
+  const followFrame = (): void => {
     rafId = null
-    if (disposed || !visible) {
-      sentinelDeadline = null
+    if (
+      disposed ||
+      !visible ||
+      (heldPointerIds.size === 0 && followDeadline !== null && performance.now() >= followDeadline)
+    ) {
+      followDeadline = null
       return
     }
-    if (sentinelDeadline !== null && performance.now() >= sentinelDeadline) {
-      sentinelDeadline = null
-      return
-    }
-    const p = computePlacement()
+    const p = measureTarget()
     if (!p) {
-      if (invalidFrames++ >= MAX_INVALID_FOLLOW_FRAMES) {
-        sentinelDeadline = null
-        return
-      }
-      if (!disposed && visible && followGeometry) {
-        rafId = requestAnimationFrame(sentinelFrame)
-      } else {
-        sentinelDeadline = null
-      }
+      if (++invalidFrames >= MAX_INVALID_FOLLOW_FRAMES) followDeadline = null
+      else scheduleFollowFrame()
       return
     }
     invalidFrames = 0
     if (!p.visible) {
-      if (shouldCloseOnHiddenPoll()) {
-        sentinelDeadline = null
-        return
-      }
-      if (!disposed && visible && followGeometry) {
-        rafId = requestAnimationFrame(sentinelFrame)
+      // Hidden frames are never published here; stop once hidden is already
+      // published or the target stays hidden past its budget.
+      if (lastPublished?.visible === false || ++hiddenFrames >= MAX_HIDDEN_FOLLOW_FRAMES) {
+        followDeadline = null
       } else {
-        sentinelDeadline = null
+        scheduleFollowFrame()
       }
       return
     }
-    if (lastPublished && samePlacement(lastPublished, p)) {
-      steadyFrames++
-      if (steadyFrames >= STEADY_CLOSE_FRAMES && !pointerHeld) {
-        sentinelDeadline = null
+    // Steadiness is judged against what was measured last frame, not against
+    // what publish() accepted: a candidate that publish() keeps rejecting
+    // must not keep looking "different" forever just because publishPlacement
+    // rolls lastPublished back on rejection, which would spin the frame loop.
+    const steadyFrame = lastFramePlacement !== null && samePlacement(lastFramePlacement, p)
+    lastFramePlacement = p
+    if (!dedupe || !lastPublished || !samePlacement(lastPublished, p)) publishPlacement(p)
+    if (steadyFrame) {
+      if (++steadyFrames >= STEADY_CLOSE_FRAMES && heldPointerIds.size === 0) {
+        followDeadline = null
         return
       }
     } else {
-      publishCandidate(p)
       steadyFrames = 0
+      hiddenFrames = 0
     }
-    if (!disposed && visible && followGeometry) {
-      rafId = requestAnimationFrame(sentinelFrame)
-    } else {
-      sentinelDeadline = null
-    }
+    scheduleFollowFrame()
   }
 
-  const openSentinel = (): void => {
+  const startFrameFollow = (): void => {
     if (!followGeometry || disposed) return
     steadyFrames = 0
+    hiddenFrames = 0
+    // Seed from the last accepted placement so the first post-open frame
+    // doesn't look unsteady on an unchanged rect.
+    lastFramePlacement = lastPublished
     if (rafId === null) {
       invalidFrames = 0
-      rafId = requestAnimationFrame(sentinelFrame)
+      rafId = requestAnimationFrame(followFrame)
     }
   }
 
-  const closeSentinel = (): void => {
+  const stopFrameFollow = (): void => {
     if (rafId !== null) {
       cancelAnimationFrame(rafId)
       rafId = null
     }
     steadyFrames = 0
+    hiddenFrames = 0
     invalidFrames = 0
-    sentinelDeadline = null
-    pointerHeld = false
-    activePointerId = null
+    lastFramePlacement = lastPublished
+    followDeadline = null
+    heldPointerIds.clear()
   }
 
   const onScroll = (): void => {
-    if (followGeometry) openSentinel()
-    else emit()
+    if (followGeometry) startFrameFollow()
+    else measureAndPublish()
   }
 
   const onPointerDown = (e: Event): void => {
     const t = e.target as Element | null
-    if (t && t.closest && t.closest('[role="separator"]')) {
-      if (!pointerHeld) activePointerId = (e as PointerEvent).pointerId
-      pointerHeld = true
-      openSentinel()
+    if (holdSelector && t && t.closest && t.closest(holdSelector)) {
+      // The first of possibly several concurrently-held pointers drops any
+      // pulse() deadline: a held press has no time limit.
+      if (heldPointerIds.size === 0) followDeadline = null
+      heldPointerIds.add((e as PointerEvent).pointerId)
+      startFrameFollow()
     }
   }
 
-  const releasePointer = (e?: Event): void => {
-    if (!pointerHeld) return
-    if (e && activePointerId !== (e as PointerEvent).pointerId) return
-    pointerHeld = false
-    activePointerId = null
-    openSentinel()
+  // pointerId undefined means "release everything" (window blur, or an event
+  // that never carried a pointerId, matching the single-pointer tests that
+  // dispatch plain Events). Otherwise only that one id's hold ends, and the
+  // frame following only leaves its held (no-deadline) state once none remain.
+  const releasePointer = (pointerId?: number): void => {
+    if (heldPointerIds.size === 0) return
+    if (pointerId !== undefined && !heldPointerIds.delete(pointerId)) return
+    if (pointerId === undefined) heldPointerIds.clear()
+    if (heldPointerIds.size > 0) return
+    followDeadline = null
+    startFrameFollow()
   }
 
   const onPointerUp = (e: Event): void => {
-    releasePointer(e)
+    releasePointer((e as PointerEvent).pointerId)
   }
 
   const onPointerCancel = (e: Event): void => {
-    releasePointer(e)
+    releasePointer((e as PointerEvent).pointerId)
   }
 
   const onWindowBlur = (): void => {
@@ -413,15 +329,20 @@ export function createPlacementAnchor(
   }
 
   const startOptionalObserving = (): void => {
-    if (guardDisplayNone && !io && typeof IntersectionObserver !== 'undefined') {
-      io = new IntersectionObserver(emit)
-      io.observe(targetRef!)
+    if (
+      treatZeroAreaAsHidden &&
+      !intersectionObserver &&
+      typeof IntersectionObserver !== 'undefined'
+    ) {
+      intersectionObserver = new IntersectionObserver(measureAndPublish)
+      intersectionObserver.observe(targetRef!)
     }
     if (followScroll && !scrollListening) {
       window.addEventListener('scroll', onScroll, passiveCapture)
       scrollListening = true
     }
-    if (followGeometry && !geometryListening) {
+    // Mounted only while both followGeometry and holdSelector are set.
+    if (followGeometry && holdSelector && !geometryListening) {
       window.addEventListener('pointerdown', onPointerDown, capture)
       window.addEventListener('pointerup', onPointerUp, capture)
       window.addEventListener('pointercancel', onPointerCancel, capture)
@@ -430,49 +351,47 @@ export function createPlacementAnchor(
     }
   }
 
-  const stopOptionalObserving = (): void => {
-    if (io && !guardDisplayNone) {
-      io.disconnect()
-      io = null
-    }
-    if (scrollListening && !followScroll) {
-      window.removeEventListener('scroll', onScroll, passiveCapture)
-      scrollListening = false
-    }
-    if (geometryListening && !followGeometry) {
-      window.removeEventListener('pointerdown', onPointerDown, capture)
-      window.removeEventListener('pointerup', onPointerUp, capture)
-      window.removeEventListener('pointercancel', onPointerCancel, capture)
-      window.removeEventListener('blur', onWindowBlur)
-      geometryListening = false
-      closeSentinel()
-    }
+  const stopIntersection = (): void => {
+    if (!intersectionObserver) return
+    intersectionObserver.disconnect()
+    intersectionObserver = null
   }
 
-  const stopAllOptionalObserving = (): void => {
-    if (io) {
-      io.disconnect()
-      io = null
+  const stopScroll = (): void => {
+    if (!scrollListening) return
+    window.removeEventListener('scroll', onScroll, passiveCapture)
+    scrollListening = false
+  }
+
+  const stopGeometryListeners = (): void => {
+    if (!geometryListening) return
+    window.removeEventListener('pointerdown', onPointerDown, capture)
+    window.removeEventListener('pointerup', onPointerUp, capture)
+    window.removeEventListener('pointercancel', onPointerCancel, capture)
+    window.removeEventListener('blur', onWindowBlur)
+    geometryListening = false
+  }
+
+  // Detaches only the optional observers whose flag has been turned off.
+  const stopDisabledObserving = (): void => {
+    if (!treatZeroAreaAsHidden) stopIntersection()
+    if (!followScroll) stopScroll()
+    // The pointer listeners are only useful while both flags hold; drop them
+    // (and any held-pointer state they were tracking) as soon as either lapses.
+    if ((!followGeometry || !holdSelector) && geometryListening) {
+      stopGeometryListeners()
+      heldPointerIds.clear()
     }
-    if (scrollListening) {
-      window.removeEventListener('scroll', onScroll, passiveCapture)
-      scrollListening = false
-    }
-    if (geometryListening) {
-      window.removeEventListener('pointerdown', onPointerDown, capture)
-      window.removeEventListener('pointerup', onPointerUp, capture)
-      window.removeEventListener('pointercancel', onPointerCancel, capture)
-      window.removeEventListener('blur', onWindowBlur)
-      geometryListening = false
-    }
-    closeSentinel()
+    // Independent of whether the listeners were mounted: turning followGeometry
+    // off must always stop frame following, not just when holdSelector was set.
+    if (!followGeometry) stopFrameFollow()
   }
 
   const startObserving = (): void => {
     if (observer) return
-    observer = new ResizeObserver(emit)
+    observer = new ResizeObserver(measureAndPublish)
     observer.observe(targetRef!)
-    window.addEventListener('resize', emit)
+    window.addEventListener('resize', measureAndPublish)
     startOptionalObserving()
   }
 
@@ -481,20 +400,23 @@ export function createPlacementAnchor(
       observer.disconnect()
       observer = null
     }
-    window.removeEventListener('resize', emit)
-    stopAllOptionalObserving()
+    window.removeEventListener('resize', measureAndPublish)
+    stopIntersection()
+    stopScroll()
+    stopGeometryListeners()
+    stopFrameFollow()
   }
 
-  const apply = (): void => {
+  const applyOptions = (): void => {
     lastPublished = null
     if (visible) {
       startObserving()
-      const placement = computePlacement()
-      if (placement) publishCandidate(placement)
+      const placement = measureTarget()
+      if (placement) publishPlacement(placement)
     } else {
       stopObserving()
       const hidden: Placement = { visible: false }
-      publishCandidate(hidden)
+      publishPlacement(hidden)
     }
   }
 
@@ -514,33 +436,45 @@ export function createPlacementAnchor(
   if (opts.signal?.aborted) dispose()
   else {
     removeAbortListener = watchAbort(opts.signal, dispose)
-    apply()
+    // A throwing first publish must not leave the observer/listeners it just
+    // started (startObserving() runs before the first publishPlacement())
+    // mounted on a handle the caller never got to dispose.
+    try {
+      applyOptions()
+    } catch (error) {
+      dispose()
+      throw error
+    }
   }
 
   return {
-    update(next: PlacementAnchorOptions): void {
+    update(next: Omit<ViewAnchorOptions, 'signal'>): void {
       if (disposed) return
+      // Validate before touching any state so a bad selector throws
+      // atomically and the previous holdSelector stays in effect.
+      if (next.holdSelector) targetRef!.matches(next.holdSelector)
       publish = next.publish
       visible = next.visible
-      // Omitting a flag preserves its current value so callers that only
-      // pass { visible, publish } don't inadvertently disable enabled flags.
-      guardDisplayNone = next.guardDisplayNone ?? guardDisplayNone
-      followScroll = next.followScroll ?? followScroll
-      followGeometry = next.followGeometry ?? followGeometry
+      // Full configuration: omitted flags reset to defaults.
+      treatZeroAreaAsHidden = next.treatZeroAreaAsHidden ?? false
+      followScroll = next.followScroll ?? false
+      followGeometry = next.followGeometry ?? false
+      holdSelector = next.holdSelector === undefined ? DEFAULT_HOLD_SELECTOR : next.holdSelector
+      dedupe = next.dedupe ?? true
       if (visible && observer) {
-        stopOptionalObserving()
+        stopDisabledObserving()
         startOptionalObserving()
       }
-      apply()
+      applyOptions()
     },
     dispose,
     pulse(durationMs?: number): void {
       if (disposed || !followGeometry) return
       if (durationMs !== undefined && durationMs > 0) {
         const next = performance.now() + durationMs
-        sentinelDeadline = sentinelDeadline === null ? next : Math.max(sentinelDeadline, next)
+        followDeadline = followDeadline === null ? next : Math.max(followDeadline, next)
       }
-      openSentinel()
+      startFrameFollow()
     },
   }
 }

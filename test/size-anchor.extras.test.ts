@@ -1,16 +1,14 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createSizeAdvertiser } from '../src/size-advertiser.js'
-import type { AdvertisedSize } from '../src/types.js'
+import { createSizeAnchor } from '../src/size-anchor.js'
+import type { SizeMeasurement } from '../src/types.js'
 
 // ── Extras: clipped/degenerate RO shapes, multi-instance isolation, and
-//    the new update() re-advertise behaviour ──────────────────────────────
+//    update() re-publish behaviour ──────────────────────────────────────
 //
-// Same stub style as `size-advertiser.test.ts`. The one addition is
-// `fireRaw(entry)`: the base `fire(block, inline)` always fills BOTH
-// borderBoxSize and contentBoxSize with one box each, so it cannot model a
-// degenerate entry (border-box absent, empty arrays). `fireRaw` posts an
-// arbitrary entry verbatim, letting us exercise the
-// `borderBoxSize?.[0] ?? contentBoxSize?.[0] ?? latest` fallback chain.
+// Same stub style as `size-anchor.test.ts`. `fireRaw(entry)` posts an
+// arbitrary entry verbatim to exercise the
+// `borderBoxSize?.[0] ?? contentBoxSize?.[0] ?? latest` fallback chain
+// (the base `fire(block, inline)` always fills both box arrays).
 
 interface RoSize {
   blockSize: number
@@ -104,51 +102,51 @@ function el(): HTMLElement {
   return document.createElement('div')
 }
 
-describe('createSizeAdvertiser: update() re-advertises current value', () => {
+describe('createSizeAnchor: update() re-publishes current value', () => {
   it('emits the current size to the new sink immediately, without a fresh RO tick', () => {
-    const first = vi.fn<(s: AdvertisedSize) => void>()
-    const second = vi.fn<(s: AdvertisedSize) => void>()
-    const handle = createSizeAdvertiser(el(), { axis: 'block', publish: first })
+    const first = vi.fn<(s: SizeMeasurement) => void>()
+    const second = vi.fn<(s: SizeMeasurement) => void>()
+    const handle = createSizeAnchor(el(), { axis: 'block', publish: first })
 
     obs().fire(120, 0)
     flushRafs()
     expect(first).toHaveBeenCalledWith({ axis: 'block', extent: 120 })
 
     // No fire() between swap and assertion — the value must arrive on update().
-    handle.update(second)
+    handle.update({ publish: second })
     expect(second).toHaveBeenCalledTimes(1)
     expect(second).toHaveBeenCalledWith({ axis: 'block', extent: 120 })
   })
 
-  it('re-advertises a measured zero instead of treating it as no value', () => {
-    const first = vi.fn<(s: AdvertisedSize) => void>()
-    const second = vi.fn<(s: AdvertisedSize) => void>()
-    const handle = createSizeAdvertiser(el(), { axis: 'block', publish: first })
+  it('re-publishes a measured zero instead of treating it as no value', () => {
+    const first = vi.fn<(s: SizeMeasurement) => void>()
+    const second = vi.fn<(s: SizeMeasurement) => void>()
+    const handle = createSizeAnchor(el(), { axis: 'block', publish: first })
 
     obs().fire(0, 0)
     flushRafs()
-    handle.update(second)
+    handle.update({ publish: second })
 
     expect(second).toHaveBeenCalledWith({ axis: 'block', extent: 0 })
   })
 })
 
-describe('createSizeAdvertiser: update() before any size', () => {
+describe('createSizeAnchor: update() before any size', () => {
   it('does not call the new sink when no RO frame has produced a size yet', () => {
-    const first = vi.fn<(s: AdvertisedSize) => void>()
-    const second = vi.fn<(s: AdvertisedSize) => void>()
-    const handle = createSizeAdvertiser(el(), { axis: 'block', publish: first })
+    const first = vi.fn<(s: SizeMeasurement) => void>()
+    const second = vi.fn<(s: SizeMeasurement) => void>()
+    const handle = createSizeAnchor(el(), { axis: 'block', publish: first })
 
     // latest is still null — produce() returns null.
-    handle.update(second)
+    handle.update({ publish: second })
     expect(second).not.toHaveBeenCalled()
   })
 })
 
-describe('createSizeAdvertiser: content-box fallback', () => {
+describe('createSizeAnchor: content-box fallback', () => {
   it('uses contentBoxSize when borderBoxSize is absent', () => {
-    const publish = vi.fn<(s: AdvertisedSize) => void>()
-    createSizeAdvertiser(el(), { axis: 'block', publish })
+    const publish = vi.fn<(s: SizeMeasurement) => void>()
+    createSizeAnchor(el(), { axis: 'block', publish })
 
     obs().fireRaw({ contentBoxSize: [{ blockSize: 88, inlineSize: 0 }] })
     flushRafs()
@@ -157,10 +155,10 @@ describe('createSizeAdvertiser: content-box fallback', () => {
   })
 })
 
-describe('createSizeAdvertiser: empty box arrays', () => {
+describe('createSizeAnchor: empty box arrays', () => {
   it('an empty-array entry publishes nothing yet does not break a later real frame', () => {
-    const publish = vi.fn<(s: AdvertisedSize) => void>()
-    createSizeAdvertiser(el(), { axis: 'block', publish })
+    const publish = vi.fn<(s: SizeMeasurement) => void>()
+    createSizeAnchor(el(), { axis: 'block', publish })
 
     obs().fireRaw({ borderBoxSize: [], contentBoxSize: [] })
     flushRafs()
@@ -173,10 +171,10 @@ describe('createSizeAdvertiser: empty box arrays', () => {
   })
 })
 
-describe('createSizeAdvertiser: zero extent', () => {
+describe('createSizeAnchor: zero extent', () => {
   it('publishes extent 0 (content collapsed) rather than dropping the frame', () => {
-    const publish = vi.fn<(s: AdvertisedSize) => void>()
-    createSizeAdvertiser(el(), { axis: 'block', publish })
+    const publish = vi.fn<(s: SizeMeasurement) => void>()
+    createSizeAnchor(el(), { axis: 'block', publish })
 
     obs().fire(0, 0)
     flushRafs()
@@ -186,12 +184,12 @@ describe('createSizeAdvertiser: zero extent', () => {
   })
 })
 
-describe('createSizeAdvertiser: independent instances', () => {
-  it('each advertiser owns its own sink and dedupe baseline', () => {
-    const publishA = vi.fn<(s: AdvertisedSize) => void>()
-    const publishB = vi.fn<(s: AdvertisedSize) => void>()
-    createSizeAdvertiser(el(), { axis: 'block', publish: publishA })
-    createSizeAdvertiser(el(), { axis: 'block', publish: publishB })
+describe('createSizeAnchor: independent instances', () => {
+  it('each size anchor owns its own sink and dedupe baseline', () => {
+    const publishA = vi.fn<(s: SizeMeasurement) => void>()
+    const publishB = vi.fn<(s: SizeMeasurement) => void>()
+    createSizeAnchor(el(), { axis: 'block', publish: publishA })
+    createSizeAnchor(el(), { axis: 'block', publish: publishB })
 
     // instances[0] drives A only.
     obs(0).fire(120, 0)
@@ -210,16 +208,16 @@ describe('createSizeAdvertiser: independent instances', () => {
   })
 })
 
-describe('createSizeAdvertiser: baseline resets per instance', () => {
-  it('a new advertiser publishes its first frame even if it equals a disposed one', () => {
-    const publishA = vi.fn<(s: AdvertisedSize) => void>()
-    const handleA = createSizeAdvertiser(el(), { axis: 'block', publish: publishA })
+describe('createSizeAnchor: baseline resets per instance', () => {
+  it('a new size anchor publishes its first frame even if it equals a disposed one', () => {
+    const publishA = vi.fn<(s: SizeMeasurement) => void>()
+    const handleA = createSizeAnchor(el(), { axis: 'block', publish: publishA })
     obs(0).fire(120, 0)
     flushRafs()
     handleA.dispose()
 
-    const publishB = vi.fn<(s: AdvertisedSize) => void>()
-    createSizeAdvertiser(el(), { axis: 'block', publish: publishB })
+    const publishB = vi.fn<(s: SizeMeasurement) => void>()
+    createSizeAnchor(el(), { axis: 'block', publish: publishB })
     obs(1).fire(120, 0)
     flushRafs()
 
@@ -228,24 +226,24 @@ describe('createSizeAdvertiser: baseline resets per instance', () => {
   })
 })
 
-describe('createSizeAdvertiser: body/html guard', () => {
+describe('createSizeAnchor: body/html guard', () => {
   it('warns once when target is document.body and not for a normal element', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const publish = vi.fn<(s: AdvertisedSize) => void>()
+    const publish = vi.fn<(s: SizeMeasurement) => void>()
 
-    createSizeAdvertiser(document.body, { axis: 'block', publish })
+    createSizeAnchor(document.body, { axis: 'block', publish })
     expect(warn).toHaveBeenCalledTimes(1)
 
     warn.mockClear()
-    createSizeAdvertiser(el(), { axis: 'block', publish })
+    createSizeAnchor(el(), { axis: 'block', publish })
     expect(warn).not.toHaveBeenCalled()
   })
 })
 
-describe('createSizeAdvertiser: idempotent dispose', () => {
+describe('createSizeAnchor: idempotent dispose', () => {
   it('a second dispose() is a no-op (no throw, no extra disconnect)', () => {
-    const publish = vi.fn<(s: AdvertisedSize) => void>()
-    const handle = createSizeAdvertiser(el(), { axis: 'block', publish })
+    const publish = vi.fn<(s: SizeMeasurement) => void>()
+    const handle = createSizeAnchor(el(), { axis: 'block', publish })
 
     handle.dispose()
     expect(() => handle.dispose()).not.toThrow()

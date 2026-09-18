@@ -52,3 +52,33 @@ jobs:
 
       - name: Fail if the generated docs demo is stale
         run: git diff --exit-code -- docs
+
+  # The default install is React 18; this job runs the suite against the real
+  # React 19 renderer, whose callback-ref cleanup path differs.
+  react-19:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Switch to React 19
+        run: pnpm add -D react@19 react-dom@19 @types/react@19 @types/react-dom@19
+
+      - name: Check types
+        run: pnpm run check-types
+
+      - name: Test
+        run: pnpm run test

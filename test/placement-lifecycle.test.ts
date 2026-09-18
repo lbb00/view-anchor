@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPlacementAnchor } from '../src/view-anchor.js'
+import { createViewAnchor } from '../src/view-anchor.js'
 import type { Placement } from '../src/types.js'
 
 class FakeResizeObserver {
@@ -83,7 +83,7 @@ function pointerEvent(type: string, pointerId: number): Event {
   return event
 }
 
-describe('createPlacementAnchor dynamic lifecycle options', () => {
+describe('createViewAnchor dynamic lifecycle options', () => {
   let raf: FakeRaf
 
   beforeEach(() => {
@@ -105,7 +105,7 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
   it('reconfigures guard, scroll, and geometry follow without duplicate resources', () => {
     const publish = vi.fn<(placement: Placement) => void>()
     const target = element()
-    const handle = createPlacementAnchor(target, { visible: true, publish })
+    const handle = createViewAnchor(target, { visible: true, publish })
 
     expect(FakeResizeObserver.instances).toHaveLength(1)
     expect(FakeIntersectionObserver.instances).toHaveLength(0)
@@ -113,9 +113,10 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
     handle.update({
       visible: true,
       publish,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followScroll: true,
       followGeometry: true,
+      holdSelector: '[role="separator"]',
     })
     expect(FakeResizeObserver.instances).toHaveLength(1)
     expect(FakeIntersectionObserver.instances).toHaveLength(1)
@@ -123,7 +124,7 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
     handle.update({
       visible: true,
       publish,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followScroll: true,
       followGeometry: true,
     })
@@ -136,7 +137,7 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
     handle.update({
       visible: true,
       publish,
-      guardDisplayNone: false,
+      treatZeroAreaAsHidden: false,
       followScroll: false,
       followGeometry: false,
     })
@@ -149,14 +150,14 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
     handle.update({
       visible: false,
       publish,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followScroll: true,
       followGeometry: true,
     })
     handle.update({
       visible: true,
       publish,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followScroll: true,
       followGeometry: true,
     })
@@ -164,38 +165,40 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
     handle.dispose()
   })
 
-  it('keeps guardDisplayNone/followScroll/followGeometry across an update that omits them', () => {
+  it('resets treatZeroAreaAsHidden/followScroll/followGeometry to their defaults across an update that omits them', () => {
     const publish = vi.fn<(placement: Placement) => void>()
     const target = element()
-    const handle = createPlacementAnchor(target, {
+    const handle = createViewAnchor(target, {
       visible: true,
       publish,
-      guardDisplayNone: true,
+      treatZeroAreaAsHidden: true,
       followScroll: true,
       followGeometry: true,
+      holdSelector: '[role="separator"]',
     })
     expect(FakeIntersectionObserver.instances).toHaveLength(1)
 
-    // A caller that only ever passes `{ visible, publish }` on every update
-    // (the documented old contract) must not silently disable following/
-    // guarding enabled at creation.
+    // update() with only { visible, publish } resets all other flags to defaults.
     handle.update({ visible: true, publish })
-    expect(FakeIntersectionObserver.instances).toHaveLength(1)
-    expect(FakeIntersectionObserver.instances[0]!.disconnected).toBe(false)
+    expect(FakeIntersectionObserver.instances[0]!.disconnected).toBe(true)
 
     const drag = splitter()
+    drag.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(raf.pending).toBe(0)
+
+    // Passing followGeometry back on re-enables it.
+    handle.update({ visible: true, publish, followGeometry: true })
     drag.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     expect(raf.pending).toBe(1)
 
     // An explicit `false` still turns a flag off.
     handle.update({ visible: true, publish, followGeometry: false })
     expect(raf.pending).toBe(0)
-    expect(FakeIntersectionObserver.instances[0]!.disconnected).toBe(false)
 
     handle.dispose()
   })
 
-  it('uses the latest display-none guard for its synchronous update publish', () => {
+  it('uses the latest treatZeroAreaAsHidden setting for its synchronous update publish', () => {
     let collapsed = false
     const target = document.createElement('div')
     vi.spyOn(target, 'getBoundingClientRect').mockImplementation(
@@ -213,13 +216,13 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
         }) as DOMRect,
     )
     const publish = vi.fn<(placement: Placement) => void>()
-    const handle = createPlacementAnchor(target, { visible: true, publish })
+    const handle = createViewAnchor(target, { visible: true, publish })
 
     collapsed = true
-    handle.update({ visible: true, publish, guardDisplayNone: true })
+    handle.update({ visible: true, publish, treatZeroAreaAsHidden: true })
     expect(publish).toHaveBeenLastCalledWith({ visible: false })
 
-    handle.update({ visible: true, publish, guardDisplayNone: false })
+    handle.update({ visible: true, publish, treatZeroAreaAsHidden: false })
     expect(publish).toHaveBeenLastCalledWith({
       visible: true,
       bounds: { x: 0, y: 0, width: 0, height: 100 },
@@ -229,10 +232,11 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
 
   it('pointercancel and window blur release a drag, close after steady frames, and allow the next drag', () => {
     const publish = vi.fn<(placement: Placement) => void>()
-    const handle = createPlacementAnchor(element(), {
+    const handle = createViewAnchor(element(), {
       visible: true,
       publish,
       followGeometry: true,
+      holdSelector: '[role="separator"]',
     })
     const drag = splitter()
 
@@ -263,10 +267,11 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
   })
 
   it('ignores a different pointer ending while the splitter pointer is still held', () => {
-    const handle = createPlacementAnchor(element(), {
+    const handle = createViewAnchor(element(), {
       visible: true,
       publish: vi.fn<(placement: Placement) => void>(),
       followGeometry: true,
+      holdSelector: '[role="separator"]',
     })
     const drag = splitter()
 
@@ -307,10 +312,11 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
         handle.update({ visible: true, publish, followGeometry: false })
       }
     })
-    const handle = createPlacementAnchor(target, {
+    const handle = createViewAnchor(target, {
       visible: true,
       publish,
       followGeometry: true,
+      holdSelector: '[role="separator"]',
     })
 
     splitter().dispatchEvent(pointerEvent('pointerdown', 1))
@@ -319,5 +325,105 @@ describe('createPlacementAnchor dynamic lifecycle options', () => {
     raf.flush()
 
     expect(raf.pending).toBe(0)
+  })
+
+  it('rolls back every listener and observer when the first publish throws during creation', () => {
+    const target = element()
+    const controller = new AbortController()
+    const signalRemoveSpy = vi.spyOn(controller.signal, 'removeEventListener')
+    const windowRemoveSpy = vi.spyOn(window, 'removeEventListener')
+    const publish = vi.fn<(placement: Placement) => void>(() => {
+      throw new Error('boom')
+    })
+
+    expect(() =>
+      createViewAnchor(target, {
+        visible: true,
+        publish,
+        treatZeroAreaAsHidden: true,
+        followScroll: true,
+        followGeometry: true,
+        holdSelector: '[role="separator"]',
+        signal: controller.signal,
+      }),
+    ).toThrow('boom')
+
+    expect(FakeResizeObserver.instances).toHaveLength(1)
+    expect(FakeResizeObserver.instances[0]!.disconnected).toBe(true)
+    expect(FakeIntersectionObserver.instances).toHaveLength(1)
+    expect(FakeIntersectionObserver.instances[0]!.disconnected).toBe(true)
+    expect(windowRemoveSpy).toHaveBeenCalledWith('resize', expect.any(Function))
+    expect(windowRemoveSpy).toHaveBeenCalledWith('scroll', expect.any(Function), expect.anything())
+    expect(windowRemoveSpy).toHaveBeenCalledWith(
+      'pointerdown',
+      expect.any(Function),
+      expect.anything(),
+    )
+    expect(windowRemoveSpy).toHaveBeenCalledWith(
+      'pointerup',
+      expect.any(Function),
+      expect.anything(),
+    )
+    expect(windowRemoveSpy).toHaveBeenCalledWith(
+      'pointercancel',
+      expect.any(Function),
+      expect.anything(),
+    )
+    expect(windowRemoveSpy).toHaveBeenCalledWith('blur', expect.any(Function))
+    expect(signalRemoveSpy).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
+  it('releases frame following only once every held pointer has been released (later-first release order)', () => {
+    const handle = createViewAnchor(element(), {
+      visible: true,
+      publish: vi.fn<(placement: Placement) => void>(),
+      followGeometry: true,
+      holdSelector: '[role="separator"]',
+    })
+    const drag = splitter()
+
+    drag.dispatchEvent(pointerEvent('pointerdown', 1))
+    drag.dispatchEvent(pointerEvent('pointerdown', 2))
+    expect(raf.pending).toBe(1)
+
+    // Release the first pointer while the second is still held: must stay open.
+    window.dispatchEvent(pointerEvent('pointerup', 1))
+    raf.flush()
+    raf.flush()
+    expect(raf.pending).toBe(1)
+
+    // Release the second (last) pointer: now steady frames close it.
+    window.dispatchEvent(pointerEvent('pointerup', 2))
+    raf.flush()
+    raf.flush()
+    expect(raf.pending).toBe(0)
+    handle.dispose()
+  })
+
+  it('releases frame following only once every held pointer has been released (earlier-first release order)', () => {
+    const handle = createViewAnchor(element(), {
+      visible: true,
+      publish: vi.fn<(placement: Placement) => void>(),
+      followGeometry: true,
+      holdSelector: '[role="separator"]',
+    })
+    const drag = splitter()
+
+    drag.dispatchEvent(pointerEvent('pointerdown', 1))
+    drag.dispatchEvent(pointerEvent('pointerdown', 2))
+    expect(raf.pending).toBe(1)
+
+    // Release the second pointer while the first is still held: must stay open.
+    window.dispatchEvent(pointerEvent('pointerup', 2))
+    raf.flush()
+    raf.flush()
+    expect(raf.pending).toBe(1)
+
+    // Release the first (last) pointer: now steady frames close it.
+    window.dispatchEvent(pointerEvent('pointerup', 1))
+    raf.flush()
+    raf.flush()
+    expect(raf.pending).toBe(0)
+    handle.dispose()
   })
 })

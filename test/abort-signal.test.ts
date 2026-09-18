@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createGeometryBatcher } from '../src/protocol-publisher.js'
-import { createSizeAdvertiser } from '../src/size-advertiser.js'
-import { createPlacementAnchor, createViewAnchor } from '../src/view-anchor.js'
+import { createSizeAnchor } from '../src/size-anchor.js'
+import { createViewAnchor } from '../src/view-anchor.js'
 
 class FakeResizeObserver {
   static instances: FakeResizeObserver[] = []
@@ -60,9 +60,8 @@ describe('AbortSignal lifecycle', () => {
     controller.abort()
     const publish = vi.fn()
 
-    createViewAnchor(target(), { present: true, publish, signal: controller.signal })
-    createPlacementAnchor(target(), { visible: true, publish, signal: controller.signal })
-    createSizeAdvertiser(target(), { axis: 'block', publish, signal: controller.signal })
+    createViewAnchor(target(), { visible: true, publish, signal: controller.signal })
+    createSizeAnchor(target(), { axis: 'block', publish, signal: controller.signal })
     const batcher = createGeometryBatcher(publish, { signal: controller.signal })
 
     expect(publish).not.toHaveBeenCalled()
@@ -82,21 +81,15 @@ describe('AbortSignal lifecycle', () => {
   it('uses the same cleanup path when the signal aborts', async () => {
     const controller = new AbortController()
     const viewPublish = vi.fn()
-    const placementPublish = vi.fn()
     const sizePublish = vi.fn()
     const batchSend = vi.fn()
 
     const view = createViewAnchor(target(), {
-      present: true,
+      visible: true,
       publish: viewPublish,
       signal: controller.signal,
     })
-    const placement = createPlacementAnchor(target(), {
-      visible: true,
-      publish: placementPublish,
-      signal: controller.signal,
-    })
-    createSizeAdvertiser(target(), {
+    createSizeAnchor(target(), {
       axis: 'block',
       publish: sizePublish,
       signal: controller.signal,
@@ -114,18 +107,15 @@ describe('AbortSignal lifecycle', () => {
     })
 
     viewPublish.mockClear()
-    placementPublish.mockClear()
     controller.abort()
     FakeResizeObserver.instances.forEach((observer) => expect(observer.disconnected).toBe(true))
     frames.forEach((frame) => frame())
     await Promise.resolve()
 
     expect(viewPublish).not.toHaveBeenCalled()
-    expect(placementPublish).not.toHaveBeenCalled()
     expect(sizePublish).not.toHaveBeenCalled()
     expect(batchSend).not.toHaveBeenCalled()
 
     view.dispose()
-    placement.dispose()
   })
 })

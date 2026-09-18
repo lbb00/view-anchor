@@ -1,28 +1,19 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
-// ─────────────────────────────────────────────────────────────────────
-// Tests for the explicit `Placement` API, the alternative to encoding
-// "hidden" as the magic geometric value `{x:0,y:0,width:0,height:0}` (the
-// `present:false → ZERO bounds` convention in types.ts/view-anchor.ts). That
-// ZERO convention leaks a compositor/host concept ("detach the view") into the
-// geometry layer, and is ambiguous: a view that is genuinely 0-wide is
-// indistinguishable from a hidden one.
+// Tests for the explicit `Placement` API.
 //
-// The replacement contract:
+// The contract:
 //
 //   type Placement =
 //     | { visible: true; bounds: Bounds }
 //     | { visible: false }
 //
-// measure produces a `Placement`; the sink consumes a `Placement`.
-// Visibility is EXPLICIT (a discriminant), never inferred from a 0. The
-// explicit API NEVER reintroduces a ZERO-bounds path for "hidden".
+// Visibility is a discriminant, never inferred from zero-sized bounds.
+// `measurePlacement` produces a `Placement`; the sink consumes a `Placement`.
 //
-// The symbols (`measurePlacement`, `createPlacementAnchor`, `Placement`) are
+// The symbols (`measurePlacement`, `createViewAnchor`, `Placement`) are
 // imported dynamically so a missing export surfaces as a runtime/assertion
-// failure (an `undefined` that throws when called) rather than a whole-file
-// compile error that vitest would skip.
-// ─────────────────────────────────────────────────────────────────────
+// failure rather than a compile error that vitest would skip.
 
 import type { Bounds } from '../src/types.js'
 
@@ -123,9 +114,9 @@ function buildElement(rect: { x: number; y: number; w: number; h: number }): {
 interface MaybeModule {
   // measurePlacement(target): Placement — pure measure, no IPC.
   measurePlacement?: (target: HTMLElement) => ExpectedPlacement
-  // createPlacementAnchor(target, { visible, publish }): handle whose
+  // createViewAnchor(target, { visible, publish }): handle whose
   // `publish` sink receives an explicit Placement (not bare Bounds).
-  createPlacementAnchor?: (
+  createViewAnchor?: (
     target: HTMLElement,
     opts: {
       visible: boolean
@@ -145,17 +136,17 @@ function measurePlacement(target: HTMLElement): ExpectedPlacement {
   return fn!(target)
 }
 
-function createPlacementAnchor(
+function createViewAnchor(
   target: HTMLElement,
   opts: {
     visible: boolean
     publish: (placement: ExpectedPlacement) => void
   },
 ): { update(opts: unknown): void; dispose(): void } {
-  const fn = mod.createPlacementAnchor
+  const fn = mod.createViewAnchor
   expect(
     typeof fn,
-    'explicit API `createPlacementAnchor` must be a function export from view-anchor',
+    'explicit API `createViewAnchor` must be a function export from view-anchor',
   ).toBe('function')
   return fn!(target, opts)
 }
@@ -200,7 +191,7 @@ describe('Placement — hidden anchor measures to { visible:false } (no bounds)'
     const { el } = buildElement({ x: 0, y: 0, w: 0, h: 0 })
     const publish = vi.fn<(p: ExpectedPlacement) => void>()
 
-    createPlacementAnchor(el, { visible: false, publish })
+    createViewAnchor(el, { visible: false, publish })
 
     expect(publish).toHaveBeenCalledTimes(1)
     const p = publish.mock.calls[0]![0]
@@ -224,7 +215,7 @@ describe('Placement — sink consumes explicit visibility, not width===0', () =>
   it('the hidden Placement is recognisable via .visible with no geometry inspection', () => {
     const { el } = buildElement({ x: 5, y: 6, w: 100, h: 100 })
     const received: ExpectedPlacement[] = []
-    const handle = createPlacementAnchor(el, {
+    const handle = createViewAnchor(el, {
       visible: true,
       publish: (p) => received.push(p),
     })
@@ -278,7 +269,7 @@ describe('Placement — real 0-size is distinguishable from hidden (kills the ma
     const visibleZero = measurePlacement(visibleZeroEl)
 
     const hiddenReceived = vi.fn<(p: ExpectedPlacement) => void>()
-    createPlacementAnchor(hiddenEl, { visible: false, publish: hiddenReceived })
+    createViewAnchor(hiddenEl, { visible: false, publish: hiddenReceived })
     const hidden = hiddenReceived.mock.calls[0]![0]
 
     // The whole reason this refactor exists: these two states were the SAME
@@ -305,7 +296,7 @@ describe('Placement — hidden is NEVER a ZERO bounds (regression fence)', () =>
       received.push(p)
     }
 
-    const handle = createPlacementAnchor(el, { visible: true, publish })
+    const handle = createViewAnchor(el, { visible: true, publish })
     // visible → hidden → visible → hidden, exercising both directions.
     handle.update({ visible: false, publish })
     setRect({ x: 9, y: 9, w: 70, h: 80 })

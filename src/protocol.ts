@@ -1,4 +1,4 @@
-import type { AdvertisedSize, Placement } from './types.js'
+import type { SizeMeasurement, Placement } from './types.js'
 import {
   GEOMETRY_PROTOCOL_VERSION,
   type GeometryAddress,
@@ -28,8 +28,14 @@ export interface GeometryDecodeOptions {
   maxMessages: number
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+// Only plain objects count, as produced by JSON.parse or structured clone. A
+// custom prototype cannot supply missing fields; checking the prototype once
+// per object is much cheaper than an own-property check per field.
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
 
 const isSafeInteger = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value)
@@ -57,7 +63,7 @@ function decodePlacement(value: unknown): Placement | undefined {
   return { visible: true, bounds: { x, y, width, height } }
 }
 
-function decodeSize(value: unknown): AdvertisedSize | undefined {
+function decodeSize(value: unknown): SizeMeasurement | undefined {
   if (!isRecord(value)) return undefined
   if (value.axis !== 'block' && value.axis !== 'inline') return undefined
   if (!isNonNegativeSafeInteger(value.extent)) return undefined
@@ -89,7 +95,7 @@ function decodeMessage(value: unknown): GeometryMessage | undefined {
 
 /**
  * Decodes untrusted transport data without throwing. `maxMessages` is required
- * so each receiver, rather than this library, chooses its own batch limit.
+ * so each receiver chooses its own batch limit.
  */
 export function decodeGeometryWireValue(
   value: unknown,
@@ -176,6 +182,6 @@ export {
 export type {
   GeometryBatcher,
   GeometryBatcherOptions,
-  GeometryBatchSend,
-  GeometrySend,
+  GeometryBatchSender,
+  GeometryMessageSender,
 } from './protocol-publisher.js'

@@ -27,54 +27,46 @@ export type Publisher<T> = (value: T) => PublishResult
  */
 export type Placement = { visible: true; bounds: Bounds } | { visible: false }
 
-export interface ViewAnchorOptions {
-  /**
-   * Whether the native view should be attached. When false, publishes
-   * zero bounds ({ x: 0, y: 0, width: 0, height: 0 }) so the host can detach
-   * the view while keeping its instance alive.
-   */
-  present: boolean
-  /** Receives the live rect, or zero bounds when detached. */
-  publish: Publisher<Bounds>
-  /** Stops this anchor when aborted. An already-aborted signal starts no work. */
-  signal?: AbortSignal
-}
-
-export interface ViewAnchorHandle {
-  /** Apply new options and re-publish immediately. */
-  update(opts: ViewAnchorOptions): void
-  /** Stop observing and clean up listeners. After disposal no further values are published. */
-  dispose(): void
-}
-
-// --- Reverse direction: size advertiser ---
+// --- Reverse direction: size anchor ---
 //
 // Runs in a downstream document to report content size back to the host,
 // allowing the host's DOM placeholder to match the content.
 
-/** Which axis this advertiser reports: 'block' (height) or 'inline' (width). */
-export type AdvertisedAxis = 'block' | 'inline'
+/** Which axis this size anchor reports: 'block' (height) or 'inline' (width). */
+export type SizeAxis = 'block' | 'inline'
 
-/** One frame of advertised size on the owned axis. */
-export interface AdvertisedSize {
-  /** The axis this advertiser reports ('block' or 'inline'). */
-  readonly axis: AdvertisedAxis
-  /** The content extent in CSS pixels, rounded and non-negative. */
+/** One measured size on the owned axis. */
+export interface SizeMeasurement {
+  /** The axis this size anchor reports ('block' or 'inline'). */
+  readonly axis: SizeAxis
+  /**
+   * The target's border-box size on this axis in CSS pixels, rounded and
+   * non-negative. Falls back to the content box where no border box is reported.
+   */
   readonly extent: number
 }
 
-export interface SizeAdvertiserOptions {
-  /** The single axis this advertiser owns. Fixed for the advertiser's lifetime. */
-  axis: AdvertisedAxis
-  /** Receives each advertised size. */
-  publish: Publisher<AdvertisedSize>
-  /** Stops this advertiser when aborted. An already-aborted signal starts no work. */
+export interface SizeAnchorOptions {
+  /** The single axis this size anchor owns. Fixed for its lifetime. */
+  axis: SizeAxis
+  /** Receives each measured size. */
+  publish: Publisher<SizeMeasurement>
+  /** Stops this size anchor when aborted. An already-aborted signal starts no work. */
   signal?: AbortSignal
+  /**
+   * When true (the default), a measurement identical to the last published
+   * extent is not published again. When false, every measurement publishes,
+   * even an unchanged extent. Omitting it in update() resets to true.
+   */
+  dedupe?: boolean
 }
 
-export interface SizeAdvertiserHandle {
-  /** Swap the publish callback and re-advertise the current size immediately. */
-  update(publish: Publisher<AdvertisedSize>): void
+export interface SizeAnchorHandle {
+  /**
+   * Apply a full set of options and re-publish the current size
+   * immediately. Like creation, an omitted dedupe resets to true.
+   */
+  update(opts: Omit<SizeAnchorOptions, 'signal' | 'axis'>): void
   /** Stop observing and cancel any pending animation frame. */
   dispose(): void
 }
