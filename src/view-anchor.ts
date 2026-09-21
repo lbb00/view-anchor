@@ -5,9 +5,6 @@ import { watchAbort } from './abort.js'
 // not keep the caller's original callback (and whatever it captured) alive.
 const NOOP_PUBLISH = (): false => false
 
-// Default holdSelector: omitting the option keeps tracking presses on a role=separator splitter.
-export const DEFAULT_HOLD_SELECTOR = '[role="separator"]'
-
 // Round to integer pixels. Width and height are clamped to >= 0; x and y can be
 // negative, so a view scrolled out of sight is not pinned to the screen edge.
 const clampRect = (r: { x: number; y: number; width: number; height: number }): Bounds => ({
@@ -40,27 +37,23 @@ export interface ViewAnchorOptions {
    */
   treatZeroAreaAsHidden?: boolean
   /**
-   * When true, listens for capture-phase scroll events on window to re-measure
-   * when an ancestor container scrolls. Default is false.
-   * update() applies the same default: omitting it resets to false.
+   * When true, re-measures on scroll events. Uses a hybrid approach:
+   * - A capture-phase window scroll listener provides a reliable fallback that
+   *   catches all scrolls (including overflow:hidden + programmatic scrollLeft/Top,
+   *   and works even before the element is connected or after reparenting).
+   * - Scrollable ancestor listeners catch scrolls in detached subtrees or shadow
+   *   roots that do not reach window. Events reaching window are handled there
+   *   only once, even when dedupe is disabled.
+   * Ancestors are re-collected on update().
+   * Default is false. update() applies the same default: omitting it resets to false.
    */
   followScroll?: boolean
   /**
-   * When true, polls geometry per animation frame during active motion (scrolls,
-   * splitter dragging, or pulse()) and auto-closes when steady.
+   * When true, polls geometry per animation frame during active motion (scrolls
+   * or pulse()) and auto-closes when steady.
    * update() applies the same default: omitting it resets to false.
    */
   followGeometry?: boolean
-  /**
-   * CSS selector for the press-and-hold target that keeps followGeometry open
-   * for the duration of a pointer press. Only meaningful when followGeometry
-   * is true; the pointer listeners are mounted only while both are set. A capture-phase pointerdown whose
-   * target matches `closest(holdSelector)` opens frame following until release.
-   * Default is `[role="separator"]`. Pass null to disable. update() applies
-   * the same default when omitted. An invalid selector throws synchronously
-   * (SyntaxError) before any option is applied.
-   */
-  holdSelector?: string | null
   /**
    * When true (the default), a measurement identical to the last accepted
    * Placement is not published again. When false, every usable frame publishes
@@ -76,7 +69,7 @@ export interface ViewAnchorHandle {
   /**
    * Apply a full set of options and re-publish immediately. Omitted options
    * reset to defaults: treatZeroAreaAsHidden/followScroll/followGeometry → false,
-   * holdSelector → `[role="separator"]` (pass null to disable), dedupe → true.
+   * dedupe → true.
    * `signal` is not accepted here — it cannot be changed after creation.
    */
   update(opts: Omit<ViewAnchorOptions, 'signal'>): void
@@ -86,8 +79,8 @@ export interface ViewAnchorHandle {
    * Open a frame-following window. Auto-closes once stable
    * or after durationMs. No-op if followGeometry is false.
    * durationMs is an upper bound, not a minimum: the window closes as soon as
-   * two frames measure the same rect, so a transition that starts slowly
-   * (sub-pixel movement in its first frames) may not be followed to the end.
+   * two consecutive frames measure the same rect, so a transition that starts
+   * slowly (sub-pixel movement in its first frames) may not be followed to the end.
    */
   pulse(durationMs?: number): void
 }
@@ -118,6 +111,48 @@ const samePlacement = (a: Placement, b: Placement): boolean => {
 }
 
 /**
+ * Determine if an element is scrollable on either axis.
+ */
+const isScrollable = (el: Element): boolean => {
+  const style = getComputedStyle(el)
+  const overflowY = style.overflowY
+  const overflowX = style.overflowX
+  return (
+    overflowY === 'auto' ||
+    overflowY === 'scroll' ||
+    overflowY === 'hidden' ||
+    overflowX === 'auto' ||
+    overflowX === 'scroll' ||
+    overflowX === 'hidden'
+  )
+}
+
+/**
+ * Collect all scrollable ancestors of an element, from parent to root.
+ * Returns an array where the first element is the closest scrollable ancestor.
+ */
+const parentOrShadowHost = (el: Element): Element | null => {
+  if (el.parentElement) return el.parentElement
+  const parent = el.parentNode
+  return parent instanceof ShadowRoot ? parent.host : null
+}
+
+const collectScrollableAncestors = (el: HTMLElement): Element[] => {
+  const ancestors: Element[] = []
+  let current = parentOrShadowHost(el)
+  while (current) {
+    if (isScrollable(current)) {
+      ancestors.push(current)
+    }
+    current = parentOrShadowHost(current)
+  }
+  return ancestors
+}
+
+// Internal steady-frame count for followGeometry auto-close
+const STEADY_FRAME_COUNT = 2
+
+/**
  * Bind a native view or external surface to the geometry of `target`.
  *
  * When `visible === true`, publishes { visible: true, bounds } immediately,
@@ -127,25 +162,21 @@ const samePlacement = (a: Placement, b: Placement): boolean => {
  * (see the `dedupe` option).
  */
 export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): ViewAnchorHandle {
-  // A non-empty holdSelector must be a syntactically valid CSS selector
-  // (matches() throws SyntaxError otherwise). Validate before any state is
-  // created so a bad selector never partially applies.
-  if (opts.holdSelector) target.matches(opts.holdSelector)
   let visible = opts.visible
   let publish = opts.publish
   let treatZeroAreaAsHidden = opts.treatZeroAreaAsHidden ?? false
   let followScroll = opts.followScroll ?? false
   let followGeometry = opts.followGeometry ?? false
-  let holdSelector = opts.holdSelector === undefined ? DEFAULT_HOLD_SELECTOR : opts.holdSelector
   let dedupe = opts.dedupe ?? true
   // Clearable alias so dispose() can drop the reference.
   let targetRef: HTMLElement | null = target
   let observer: ResizeObserver | null = null
   let intersectionObserver: IntersectionObserver | null = null
   let scrollListening = false
-  let geometryListening = false
+  // Scrollable ancestors we're currently listening to
+  let scrollAncestors: Element[] = []
   const capture = { capture: true }
-  const passiveCapture = { capture: true, passive: true }
+  const passiveOptions = { passive: true }
   let lastPublished: Placement | null = null
   let publicationRevision = 0
   let disposed = false
@@ -155,14 +186,10 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
   // geometry settles. While closed, no frame is scheduled (zero idle overhead).
   let rafId: number | null = null
   let steadyFrames = 0
-  const STEADY_CLOSE_FRAMES = 2
   const MAX_HIDDEN_FOLLOW_FRAMES = 30
   const MAX_INVALID_FOLLOW_FRAMES = 30
   let hiddenFrames = 0
   let invalidFrames = 0
-  // Pointer ids currently matching holdSelector and held down. Non-empty
-  // keeps frame following open regardless of deadline or steady frames.
-  const heldPointerIds = new Set<number>()
   // The rect measured on the previous followed frame, independent of whether
   // publish() accepted it. Drives the steady/moving decision so a publish()
   // that keeps rejecting an unchanged measurement cannot keep resetting it.
@@ -217,11 +244,7 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
 
   const followFrame = (): void => {
     rafId = null
-    if (
-      disposed ||
-      !visible ||
-      (heldPointerIds.size === 0 && followDeadline !== null && performance.now() >= followDeadline)
-    ) {
+    if (disposed || !visible || (followDeadline !== null && performance.now() >= followDeadline)) {
       followDeadline = null
       return
     }
@@ -250,7 +273,7 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
     lastFramePlacement = p
     if (!dedupe || !lastPublished || !samePlacement(lastPublished, p)) publishPlacement(p)
     if (steadyFrame) {
-      if (++steadyFrames >= STEADY_CLOSE_FRAMES && heldPointerIds.size === 0) {
+      if (++steadyFrames >= STEADY_FRAME_COUNT) {
         followDeadline = null
         return
       }
@@ -284,7 +307,6 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
     invalidFrames = 0
     lastFramePlacement = lastPublished
     followDeadline = null
-    heldPointerIds.clear()
   }
 
   const onScroll = (): void => {
@@ -292,40 +314,41 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
     else measureAndPublish()
   }
 
-  const onPointerDown = (e: Event): void => {
-    const t = e.target as Element | null
-    if (holdSelector && t && t.closest && t.closest(holdSelector)) {
-      // The first of possibly several concurrently-held pointers drops any
-      // pulse() deadline: a held press has no time limit.
-      if (heldPointerIds.size === 0) followDeadline = null
-      heldPointerIds.add((e as PointerEvent).pointerId)
-      startFrameFollow()
+  const onAncestorScroll = (event: Event): void => {
+    // Window's capture listener already handled events that reached it. Keep
+    // ancestor listeners for events inside detached subtrees or shadow roots.
+    if (!event.composedPath().includes(window.document)) onScroll()
+  }
+
+  // Passive + capture options for the window scroll listener fallback
+  const passiveCapture = { passive: true, capture: true }
+
+  const startScrollListening = (): void => {
+    if (scrollListening || !targetRef) return
+    // Hybrid scroll listening:
+    // 1. Window capture-phase listener as a reliable fallback — catches all scrolls
+    //    including overflow:hidden + programmatic scrollLeft/Top, works before
+    //    element is connected or after reparenting without update().
+    window.addEventListener('scroll', onScroll, passiveCapture)
+    // 2. Scrollable ancestors handle events that do not reach window.
+    scrollAncestors = collectScrollableAncestors(targetRef)
+    for (const ancestor of scrollAncestors) {
+      ancestor.addEventListener('scroll', onAncestorScroll, passiveOptions)
     }
+    scrollListening = true
   }
 
-  // pointerId undefined means "release everything" (window blur, or an event
-  // that never carried a pointerId, matching the single-pointer tests that
-  // dispatch plain Events). Otherwise only that one id's hold ends, and the
-  // frame following only leaves its held (no-deadline) state once none remain.
-  const releasePointer = (pointerId?: number): void => {
-    if (heldPointerIds.size === 0) return
-    if (pointerId !== undefined && !heldPointerIds.delete(pointerId)) return
-    if (pointerId === undefined) heldPointerIds.clear()
-    if (heldPointerIds.size > 0) return
-    followDeadline = null
-    startFrameFollow()
-  }
-
-  const onPointerUp = (e: Event): void => {
-    releasePointer((e as PointerEvent).pointerId)
-  }
-
-  const onPointerCancel = (e: Event): void => {
-    releasePointer((e as PointerEvent).pointerId)
-  }
-
-  const onWindowBlur = (): void => {
-    releasePointer()
+  const stopScrollListening = (): void => {
+    if (!scrollListening) return
+    // Remove window capture listener
+    window.removeEventListener('scroll', onScroll, capture)
+    // Remove listeners from all ancestors and clear the array to avoid leaking
+    // references to elements that may leave the DOM while this anchor lives.
+    for (const ancestor of scrollAncestors) {
+      ancestor.removeEventListener('scroll', onAncestorScroll)
+    }
+    scrollAncestors.length = 0
+    scrollListening = false
   }
 
   const startOptionalObserving = (): void => {
@@ -338,16 +361,7 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
       intersectionObserver.observe(targetRef!)
     }
     if (followScroll && !scrollListening) {
-      window.addEventListener('scroll', onScroll, passiveCapture)
-      scrollListening = true
-    }
-    // Mounted only while both followGeometry and holdSelector are set.
-    if (followGeometry && holdSelector && !geometryListening) {
-      window.addEventListener('pointerdown', onPointerDown, capture)
-      window.addEventListener('pointerup', onPointerUp, capture)
-      window.addEventListener('pointercancel', onPointerCancel, capture)
-      window.addEventListener('blur', onWindowBlur)
-      geometryListening = true
+      startScrollListening()
     }
   }
 
@@ -358,32 +372,13 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
   }
 
   const stopScroll = (): void => {
-    if (!scrollListening) return
-    window.removeEventListener('scroll', onScroll, passiveCapture)
-    scrollListening = false
-  }
-
-  const stopGeometryListeners = (): void => {
-    if (!geometryListening) return
-    window.removeEventListener('pointerdown', onPointerDown, capture)
-    window.removeEventListener('pointerup', onPointerUp, capture)
-    window.removeEventListener('pointercancel', onPointerCancel, capture)
-    window.removeEventListener('blur', onWindowBlur)
-    geometryListening = false
+    stopScrollListening()
   }
 
   // Detaches only the optional observers whose flag has been turned off.
   const stopDisabledObserving = (): void => {
     if (!treatZeroAreaAsHidden) stopIntersection()
     if (!followScroll) stopScroll()
-    // The pointer listeners are only useful while both flags hold; drop them
-    // (and any held-pointer state they were tracking) as soon as either lapses.
-    if ((!followGeometry || !holdSelector) && geometryListening) {
-      stopGeometryListeners()
-      heldPointerIds.clear()
-    }
-    // Independent of whether the listeners were mounted: turning followGeometry
-    // off must always stop frame following, not just when holdSelector was set.
     if (!followGeometry) stopFrameFollow()
   }
 
@@ -403,7 +398,6 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
     window.removeEventListener('resize', measureAndPublish)
     stopIntersection()
     stopScroll()
-    stopGeometryListeners()
     stopFrameFollow()
   }
 
@@ -450,17 +444,18 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
   return {
     update(next: Omit<ViewAnchorOptions, 'signal'>): void {
       if (disposed) return
-      // Validate before touching any state so a bad selector throws
-      // atomically and the previous holdSelector stays in effect.
-      if (next.holdSelector) targetRef!.matches(next.holdSelector)
       publish = next.publish
       visible = next.visible
       // Full configuration: omitted flags reset to defaults.
       treatZeroAreaAsHidden = next.treatZeroAreaAsHidden ?? false
-      followScroll = next.followScroll ?? false
+      const newFollowScroll = next.followScroll ?? false
       followGeometry = next.followGeometry ?? false
-      holdSelector = next.holdSelector === undefined ? DEFAULT_HOLD_SELECTOR : next.holdSelector
       dedupe = next.dedupe ?? true
+      // Recollect ancestors if followScroll is (still) on - target may have moved
+      if (newFollowScroll && scrollListening) {
+        stopScrollListening()
+      }
+      followScroll = newFollowScroll
       if (visible && observer) {
         stopDisabledObserving()
         startOptionalObserving()

@@ -17,7 +17,7 @@ describe('root entry (src/index.ts) export surface', () => {
 })
 
 describe('React entry (src/react.ts) export surface', () => {
-  it('exports exactly useViewAnchor', () => {
-    expect(Object.keys(react).sort()).toEqual(['useViewAnchor'].sort())
+  it('exports useViewAnchor and useSizeAnchor', () => {
+    expect(Object.keys(react).sort()).toEqual(['useSizeAnchor', 'useViewAnchor'].sort())
   })
 })
