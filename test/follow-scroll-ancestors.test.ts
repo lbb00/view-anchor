@@ -474,6 +474,62 @@ describe('createViewAnchor — followScroll with scrollable ancestors', () => {
     expect(windowRemove, 'window scroll listener should be removed on dispose').toBeDefined()
   })
 
+  it('measures each live anchor at most once per scroll frame, then stops after the anchors settle or dispose', () => {
+    const pending = new Map<number, FrameRequestCallback>()
+    let nextFrame = 0
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      pending.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id))
+    const flushFrame = () => {
+      const callbacks = [...pending.values()]
+      pending.clear()
+      for (const callback of callbacks) callback(performance.now())
+    }
+
+    const container = buildScrollableContainer()
+    const anchors = Array.from({ length: 16 }, (_, index) => {
+      const { el, setRect } = buildElement({ x: index * 100, y: 0, w: 100, h: 100 })
+      container.appendChild(el)
+      const publish = vi.fn<(p: Placement) => void>()
+      const handle = createViewAnchor(el, {
+        visible: true,
+        followScroll: true,
+        followGeometry: true,
+        publish,
+      })
+      const measure = vi.mocked(el.getBoundingClientRect)
+      measure.mockClear()
+      publish.mockClear()
+      return { setRect, measure, publish, handle }
+    })
+
+    anchors[0]!.setRect({ x: 0, y: -40, w: 100, h: 100 })
+    container.dispatchEvent(new Event('scroll'))
+    expect(pending.size).toBe(anchors.length)
+    for (let frame = 0; frame < 3; frame++) flushFrame()
+
+    expect(anchors[0]!.measure).toHaveBeenCalledTimes(3)
+    expect(anchors[0]!.publish).toHaveBeenCalledExactlyOnceWith({
+      visible: true,
+      bounds: { x: 0, y: -40, width: 100, height: 100 },
+    })
+    for (const anchor of anchors.slice(1)) {
+      expect(anchor.measure).toHaveBeenCalledTimes(2)
+      expect(anchor.publish).not.toHaveBeenCalled()
+    }
+    expect(pending.size).toBe(0)
+
+    for (const anchor of anchors) {
+      anchor.handle.dispose()
+      anchor.measure.mockClear()
+    }
+    container.dispatchEvent(new Event('scroll'))
+    expect(pending.size).toBe(0)
+    for (const anchor of anchors) expect(anchor.measure).not.toHaveBeenCalled()
+  })
+
   it('(k) recollect on update clears old ancestor listeners even if element leaves DOM', () => {
     const containerA = buildScrollableContainer()
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
