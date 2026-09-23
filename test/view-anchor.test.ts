@@ -763,7 +763,7 @@ describe('createViewAnchor — display:none / first-frame guard (opt-in)', () =>
     expect(publish).not.toHaveBeenCalled()
   })
 
-  it('update() with no flags resets treatZeroAreaAsHidden, followScroll, followGeometry, holdSelector, and dedupe to their defaults', () => {
+  it('update() with no flags resets treatZeroAreaAsHidden, followScroll, followGeometry, and dedupe to their defaults', () => {
     const publish = vi.fn<(p: Placement) => void>()
     const { el } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
     const handle = createViewAnchor(el, {
@@ -772,7 +772,6 @@ describe('createViewAnchor — display:none / first-frame guard (opt-in)', () =>
       followScroll: true,
       followGeometry: true,
       treatZeroAreaAsHidden: true,
-      holdSelector: null,
       dedupe: false,
     })
     publish.mockClear()
@@ -816,17 +815,6 @@ describe('createViewAnchor — display:none / first-frame guard (opt-in)', () =>
     window.dispatchEvent(new Event('scroll'))
     expect(rafSpy).not.toHaveBeenCalled()
     expect(publish).not.toHaveBeenCalled()
-
-    // followGeometry → false and holdSelector → the default separator: turn
-    // followGeometry back on without specifying holdSelector, then a
-    // pointerdown on the default `[role="separator"]` opens frame following —
-    // proving holdSelector fell back to its default instead of staying null.
-    handle.update({ visible: true, publish, followGeometry: true })
-    const splitter = document.createElement('div')
-    splitter.setAttribute('role', 'separator')
-    document.body.appendChild(splitter)
-    splitter.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    expect(rafSpy).toHaveBeenCalled()
   })
 })
 
@@ -888,29 +876,9 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
     )
   })
 
-  /** Build a `[role="separator"]` element; a capture-phase pointerdown on it
-   *  opens a frame-following window. */
-  function buildSplitter(): HTMLElement {
-    const sep = document.createElement('div')
-    sep.setAttribute('role', 'separator')
-    document.body.appendChild(sep)
-    return sep
-  }
-
   /** Dispatch a capture-phase scroll on window. */
   function dispatchCaptureScroll(): void {
     window.dispatchEvent(new Event('scroll'))
-  }
-
-  /** Dispatch a bubbling pointerdown from `target`. */
-  function dispatchPointerdown(target: HTMLElement): void {
-    target.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-  }
-
-  /** Dispatch pointerup from `target` and on window. */
-  function dispatchPointerup(target: HTMLElement): void {
-    target.dispatchEvent(new Event('pointerup', { bubbles: true }))
-    window.dispatchEvent(new Event('pointerup'))
   }
 
   type FollowOpts = Parameters<typeof createViewAnchor>[1]
@@ -920,7 +888,6 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
     o: { visible: boolean; publish: (p: Placement) => void } & {
       followScroll?: boolean
       followGeometry?: boolean
-      holdSelector?: string | null
       dedupe?: boolean
     },
   ): PulseHandle => createViewAnchor(el, o as FollowOpts)
@@ -971,14 +938,14 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
 
     const scrollAdd = addCalls.find(([t]) => t === 'scroll')
     expect(scrollAdd, 'a window scroll listener must be registered').toBeDefined()
-    // Capture phase — either `true` or `{ capture: true }`.
+    // Capture phase — capture must be true (fallback for overflow:hidden + programmatic scroll)
     const optArg = scrollAdd![2]
     const isCapture =
       optArg === true ||
       (typeof optArg === 'object' &&
         optArg !== null &&
         (optArg as { capture?: boolean }).capture === true)
-    expect(isCapture, 'scroll listener must be capture-phase').toBe(true)
+    expect(isCapture, 'scroll listener must be capture-phase (fallback)').toBe(true)
 
     const scrollCb = scrollAdd![1]
     handle.dispose()
@@ -1013,7 +980,7 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
 
   // ── B. followGeometry — frame-following loop ─────
 
-  // B-idle: IDLE (no scroll / pointerdown / pulse) schedules NO rAF.
+  // B-idle: IDLE (no scroll / pulse) schedules NO rAF.
   //   Frame following is windowed: static cost is exactly zero.
   it('B-idle) followGeometry on but idle: NO rAF is ever scheduled (windowed = zero static cost)', () => {
     const publish = vi.fn<(p: Placement) => void>()
@@ -1028,32 +995,17 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
     expect(raf.request).not.toHaveBeenCalled()
   })
 
-  // B-open: a splitter pointerdown (capture, matching [role="separator"])
-  //   opens frame following when followGeometry:true.
-  it('B-open) a capture-phase pointerdown on a [role="separator"] opens the RAF frame following', () => {
+  // B-open: pulse() opens frame following when followGeometry:true.
+  it('B-open) pulse() opens the RAF frame following', () => {
     const publish = vi.fn<(p: Placement) => void>()
     const { el } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
-    mk(el, { visible: true, followGeometry: true, holdSelector: '[role="separator"]', publish })
-    const splitter = buildSplitter()
+    const handle = mk(el, { visible: true, followGeometry: true, publish })
     expect(raf.request).not.toHaveBeenCalled()
 
-    dispatchPointerdown(splitter)
+    handle.pulse()
 
     expect(raf.request).toHaveBeenCalled()
     expect(raf.pending).toBeGreaterThanOrEqual(1)
-  })
-
-  // B-open-nonseparator: a pointerdown NOT on a separator must NOT open it.
-  it('B-open-nonseparator) a pointerdown on a non-separator element does NOT open frame following', () => {
-    const publish = vi.fn<(p: Placement) => void>()
-    const { el } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
-    mk(el, { visible: true, followGeometry: true, publish })
-    const plain = document.createElement('div')
-    document.body.appendChild(plain)
-
-    dispatchPointerdown(plain)
-
-    expect(raf.request).not.toHaveBeenCalled()
   })
 
   // B-follow: once open, each frame whose measured rect CHANGED publishes the
@@ -1063,10 +1015,9 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
   it('B-follow) open frame following + rect changes each frame → publishes the new rect in-frame, one per changed frame', () => {
     const publish = vi.fn<(p: Placement) => void>()
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
-    mk(el, { visible: true, followGeometry: true, holdSelector: '[role="separator"]', publish })
-    const splitter = buildSplitter()
+    const handle = mk(el, { visible: true, followGeometry: true, publish })
 
-    dispatchPointerdown(splitter) // open the window
+    handle.pulse() // open the window
     publish.mockClear()
 
     // Frame 1: rect moved → publish in-frame.
@@ -1092,23 +1043,18 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
     })
   })
 
-  // B-close: after the pointer is RELEASED, N=2 consecutive UNCHANGED frames
-  //   cancel the rAF (steady = stop) — no further frame scheduled. A steady run
-  //   while the pointer is still HELD is a mid-drag pause and must NOT close
-  //   (see follow-geometry-press-drag.test.ts); close is gated on pointerup,
-  //   so this test releases before going steady.
-  it('B-close) pointerup then N=2 consecutive unchanged frames → frame following stops (cancelAnimationFrame / no further frame scheduled)', () => {
+  // B-close: N=2 consecutive UNCHANGED frames cancel the rAF (steady = stop)
+  //   — no further frame scheduled.
+  it('B-close) N=2 consecutive unchanged frames → frame following stops (cancelAnimationFrame / no further frame scheduled)', () => {
     const publish = vi.fn<(p: Placement) => void>()
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
-    mk(el, { visible: true, followGeometry: true, holdSelector: '[role="separator"]', publish })
-    const splitter = buildSplitter()
+    const handle = mk(el, { visible: true, followGeometry: true, publish })
 
-    dispatchPointerdown(splitter) // open
-    // One changing frame to prove it's live, then release and go steady.
+    handle.pulse() // open
+    // One changing frame to prove it's live.
     setRect({ x: 30, y: 0, w: 100, h: 100 })
     raf.flushFrame()
     expect(raf.pending).toBeGreaterThanOrEqual(1) // still polling
-    dispatchPointerup(splitter) // drag over → steady-close now permitted
 
     // Steady frame 1 (rect identical to last published) — not yet closed
     // (N=2 needs TWO consecutive identical frames).
@@ -1131,19 +1077,16 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
   it('dedupe:false publishes every identical follow frame but still closes frame following after 2 steady frames', () => {
     const publish = vi.fn<(p: Placement) => void>()
     const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
-    mk(el, {
+    const handle = mk(el, {
       visible: true,
       followGeometry: true,
-      holdSelector: '[role="separator"]',
       dedupe: false,
       publish,
     })
-    const splitter = buildSplitter()
 
-    dispatchPointerdown(splitter)
+    handle.pulse()
     setRect({ x: 30, y: 0, w: 100, h: 100 })
     raf.flushFrame() // changed frame: publishes, resets steady counters
-    dispatchPointerup(splitter)
     publish.mockClear()
 
     raf.flushFrame() // steady frame 1: identical rect, dedupe:false → still publishes
@@ -1285,140 +1228,6 @@ describe('createViewAnchor — scroll + frame-following loop (opt-in)', () => {
 
     expect(raf.request).not.toHaveBeenCalled()
     expect(raf.cancel).not.toHaveBeenCalled()
-  })
-})
-
-// ── Pointer listeners mounted on demand ────────────────────────────────
-//
-// The pointerdown/pointerup/pointercancel/blur listener group exists only
-// to detect a held press on holdSelector; it must be attached only while
-// BOTH followGeometry and holdSelector are set, not just followGeometry.
-describe('pointer listeners mounted on demand', () => {
-  // The shared beforeEach already spies window.add/removeEventListener (to
-  // track leaked 'resize' listeners) and forwards every call through to the
-  // real DOM. Re-spying here would just reset that same mock's
-  // implementation (vitest reuses an existing spy) and recurse, so this
-  // reads calls off the existing spy instead of wrapping it again.
-  function spyPointerListeners(): {
-    addedTypes(): string[]
-    removedTypes(): string[]
-  } {
-    const addMock = window.addEventListener as unknown as { mock: { calls: unknown[][] } }
-    const removeMock = window.removeEventListener as unknown as { mock: { calls: unknown[][] } }
-    const baseline = addMock.mock.calls.length
-    const removeBaseline = removeMock.mock.calls.length
-    return {
-      addedTypes: () => addMock.mock.calls.slice(baseline).map((call) => call[0] as string),
-      removedTypes: () =>
-        removeMock.mock.calls.slice(removeBaseline).map((call) => call[0] as string),
-    }
-  }
-
-  it('followGeometry on, holdSelector: null: no pointerdown listener is added on window', () => {
-    const spy = spyPointerListeners()
-    const publish = vi.fn<(p: Placement) => void>()
-    const { el } = buildElement({ x: 0, y: 0, w: 10, h: 10 })
-    createViewAnchor(el, { visible: true, followGeometry: true, holdSelector: null, publish })
-
-    expect(spy.addedTypes()).not.toContain('pointerdown')
-    expect(spy.addedTypes()).not.toContain('pointerup')
-    expect(spy.addedTypes()).not.toContain('pointercancel')
-  })
-
-  it('followGeometry on, holdSelector omitted: pointer listeners are mounted by default', () => {
-    const spy = spyPointerListeners()
-    const publish = vi.fn<(p: Placement) => void>()
-    const { el } = buildElement({ x: 0, y: 0, w: 10, h: 10 })
-    createViewAnchor(el, { visible: true, followGeometry: true, publish })
-
-    expect(spy.addedTypes()).toContain('pointerdown')
-    expect(spy.addedTypes()).toContain('pointerup')
-    expect(spy.addedTypes()).toContain('pointercancel')
-  })
-
-  it('update() setting holdSelector mounts the pointer listeners, and clearing it unmounts them', () => {
-    const spy = spyPointerListeners()
-    const publish = vi.fn<(p: Placement) => void>()
-    const { el } = buildElement({ x: 0, y: 0, w: 10, h: 10 })
-    const handle = createViewAnchor(el, {
-      visible: true,
-      followGeometry: true,
-      holdSelector: null,
-      publish,
-    })
-    expect(spy.addedTypes()).not.toContain('pointerdown')
-
-    handle.update({
-      visible: true,
-      followGeometry: true,
-      holdSelector: '[role="separator"]',
-      publish,
-    })
-    expect(spy.addedTypes()).toContain('pointerdown')
-
-    handle.update({ visible: true, followGeometry: true, holdSelector: null, publish })
-    expect(spy.removedTypes()).toContain('pointerdown')
-    expect(spy.removedTypes()).toContain('pointerup')
-    expect(spy.removedTypes()).toContain('pointercancel')
-  })
-})
-
-// ── Invalid holdSelector throws synchronously ──────────────────────────
-//
-// holdSelector is fed to Element.matches(); a syntactically invalid
-// selector must fail fast at creation/update time rather than surfacing
-// later as an opaque error from inside a pointerdown handler.
-describe('invalid holdSelector throws synchronously', () => {
-  it('createViewAnchor throws synchronously for an invalid holdSelector', () => {
-    const publish = vi.fn<(p: Placement) => void>()
-    const { el } = buildElement({ x: 0, y: 0, w: 10, h: 10 })
-    expect(() =>
-      createViewAnchor(el, {
-        visible: true,
-        followGeometry: true,
-        holdSelector: '[',
-        publish,
-      }),
-    ).toThrow()
-  })
-
-  it('createViewAnchor throws a DOMException named SyntaxError, not a generic Error', () => {
-    const publish = vi.fn<(p: Placement) => void>()
-    const { el } = buildElement({ x: 0, y: 0, w: 10, h: 10 })
-    try {
-      createViewAnchor(el, { visible: true, followGeometry: true, holdSelector: '[', publish })
-      throw new Error('expected createViewAnchor to throw')
-    } catch (error) {
-      expect((error as DOMException).name).toBe('SyntaxError')
-    }
-  })
-
-  it('update() throws synchronously for an invalid holdSelector, leaving the previous selector in effect', () => {
-    const publish = vi.fn<(p: Placement) => void>()
-    const { el } = buildElement({ x: 0, y: 0, w: 10, h: 10 })
-    const handle = createViewAnchor(el, {
-      visible: true,
-      followGeometry: true,
-      holdSelector: '[role="separator"]',
-      publish,
-    })
-
-    expect(() =>
-      handle.update({
-        visible: true,
-        followGeometry: true,
-        holdSelector: '[',
-        publish,
-      }),
-    ).toThrow()
-
-    // The previous, valid holdSelector must still be in effect: a matching
-    // pointerdown still opens the geometry frame following.
-    const splitter = document.createElement('div')
-    splitter.setAttribute('role', 'separator')
-    document.body.appendChild(splitter)
-    splitter.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    expect(rafSpy).toHaveBeenCalled()
   })
 })
 

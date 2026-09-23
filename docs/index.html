@@ -128,8 +128,6 @@
   .btn:hover { border-color: var(--accent); color: var(--text); }
   .btn:active { background: hsl(0 0% 26%); }
 
-  /* role="separator" matches view-anchor's default holdSelector: pressing one
-     keeps the followGeometry frame loop open for the whole drag. */
   .splitter { flex: none; position: relative; touch-action: none; }
   .splitter::after {
     content: ""; position: absolute; border-radius: 2px;
@@ -412,7 +410,7 @@
       Each surface follows its slot through <code>createViewAnchor</code>. Everything below happens on the page itself, tilted or flat:
       <ul>
         <li><b>Drag the vertical splitter.</b> Both slots resize, so a <code>ResizeObserver</code> sees it. Surface B's items rewrap, and <code>createSizeAnchor</code> reports the new height back to the page.</li>
-        <li><b>Drag the header's lower edge.</b> The slots move but keep their size, so no observer fires. Pressing a <code>role="separator"</code> (the default <code>holdSelector</code>) keeps the <code>followGeometry</code> frame loop open for the whole drag. Turn <code>followGeometry</code> off and try again.</li>
+        <li><b>Drag the header's lower edge.</b> The slots move but keep their size, so no observer fires. After each move, the page calls <code>pulse()</code> to follow the new position. Turn <code>followGeometry</code> off and try again.</li>
         <li><b>Scroll the page body.</b> <code>followScroll</code> re-measures on ancestor scrolls; the page clips each surface to the scroll viewport. Turn <code>followScroll</code> off and scroll again.</li>
         <li><b>Click <code>collapse</code>.</b> The page moves the slots itself, so it calls <code>pulse()</code> to re-measure on the next frames.</li>
         <li><b>Click <code>+</code> / <code>−</code> on surface B.</b> Its content changes height; the page resizes slot B. Slot A moves without resizing, so the page calls <code>pulse()</code> on A.</li>
@@ -443,7 +441,6 @@ var __viewAnchorCore = (function(exports) {
 	//#endregion
 	//#region src/view-anchor.ts
 	const NOOP_PUBLISH$1 = () => false;
-	const DEFAULT_HOLD_SELECTOR = "[role=\"separator\"]";
 	const clampRect = (r) => ({
 		x: Math.round(r.x),
 		y: Math.round(r.y),
@@ -472,6 +469,34 @@ var __viewAnchorCore = (function(exports) {
 		return true;
 	};
 	/**
+	* Determine if an element is scrollable on either axis.
+	*/
+	const isScrollable = (el) => {
+		const style = getComputedStyle(el);
+		const overflowY = style.overflowY;
+		const overflowX = style.overflowX;
+		return overflowY === "auto" || overflowY === "scroll" || overflowY === "hidden" || overflowX === "auto" || overflowX === "scroll" || overflowX === "hidden";
+	};
+	/**
+	* Collect all scrollable ancestors of an element, from parent to root.
+	* Returns an array where the first element is the closest scrollable ancestor.
+	*/
+	const parentOrShadowHost = (el) => {
+		if (el.parentElement) return el.parentElement;
+		const parent = el.parentNode;
+		return parent instanceof ShadowRoot ? parent.host : null;
+	};
+	const collectScrollableAncestors = (el) => {
+		const ancestors = [];
+		let current = parentOrShadowHost(el);
+		while (current) {
+			if (isScrollable(current)) ancestors.push(current);
+			current = parentOrShadowHost(current);
+		}
+		return ancestors;
+	};
+	const STEADY_FRAME_COUNT = 2;
+	/**
 	* Bind a native view or external surface to the geometry of `target`.
 	*
 	* When `visible === true`, publishes { visible: true, bounds } immediately,
@@ -481,35 +506,28 @@ var __viewAnchorCore = (function(exports) {
 	* (see the `dedupe` option).
 	*/
 	function createViewAnchor(target, opts) {
-		if (opts.holdSelector) target.matches(opts.holdSelector);
 		let visible = opts.visible;
 		let publish = opts.publish;
 		let treatZeroAreaAsHidden = opts.treatZeroAreaAsHidden ?? false;
 		let followScroll = opts.followScroll ?? false;
 		let followGeometry = opts.followGeometry ?? false;
-		let holdSelector = opts.holdSelector === void 0 ? DEFAULT_HOLD_SELECTOR : opts.holdSelector;
 		let dedupe = opts.dedupe ?? true;
 		let targetRef = target;
 		let observer = null;
 		let intersectionObserver = null;
 		let scrollListening = false;
-		let geometryListening = false;
+		let scrollAncestors = [];
 		const capture = { capture: true };
-		const passiveCapture = {
-			capture: true,
-			passive: true
-		};
+		const passiveOptions = { passive: true };
 		let lastPublished = null;
 		let publicationRevision = 0;
 		let disposed = false;
 		let rafId = null;
 		let steadyFrames = 0;
-		const STEADY_CLOSE_FRAMES = 2;
 		const MAX_HIDDEN_FOLLOW_FRAMES = 30;
 		const MAX_INVALID_FOLLOW_FRAMES = 30;
 		let hiddenFrames = 0;
 		let invalidFrames = 0;
-		const heldPointerIds = /* @__PURE__ */ new Set();
 		let lastFramePlacement = null;
 		let followDeadline = null;
 		const measureTarget = () => {
@@ -544,7 +562,7 @@ var __viewAnchorCore = (function(exports) {
 		};
 		const followFrame = () => {
 			rafId = null;
-			if (disposed || !visible || heldPointerIds.size === 0 && followDeadline !== null && performance.now() >= followDeadline) {
+			if (disposed || !visible || followDeadline !== null && performance.now() >= followDeadline) {
 				followDeadline = null;
 				return;
 			}
@@ -564,7 +582,7 @@ var __viewAnchorCore = (function(exports) {
 			lastFramePlacement = p;
 			if (!dedupe || !lastPublished || !samePlacement(lastPublished, p)) publishPlacement(p);
 			if (steadyFrame) {
-				if (++steadyFrames >= STEADY_CLOSE_FRAMES && heldPointerIds.size === 0) {
+				if (++steadyFrames >= STEADY_FRAME_COUNT) {
 					followDeadline = null;
 					return;
 				}
@@ -594,53 +612,38 @@ var __viewAnchorCore = (function(exports) {
 			invalidFrames = 0;
 			lastFramePlacement = lastPublished;
 			followDeadline = null;
-			heldPointerIds.clear();
 		};
 		const onScroll = () => {
 			if (followGeometry) startFrameFollow();
 			else measureAndPublish();
 		};
-		const onPointerDown = (e) => {
-			const t = e.target;
-			if (holdSelector && t && t.closest && t.closest(holdSelector)) {
-				if (heldPointerIds.size === 0) followDeadline = null;
-				heldPointerIds.add(e.pointerId);
-				startFrameFollow();
-			}
+		const onAncestorScroll = (event) => {
+			if (!event.composedPath().includes(window.document)) onScroll();
 		};
-		const releasePointer = (pointerId) => {
-			if (heldPointerIds.size === 0) return;
-			if (pointerId !== void 0 && !heldPointerIds.delete(pointerId)) return;
-			if (pointerId === void 0) heldPointerIds.clear();
-			if (heldPointerIds.size > 0) return;
-			followDeadline = null;
-			startFrameFollow();
+		const passiveCapture = {
+			passive: true,
+			capture: true
 		};
-		const onPointerUp = (e) => {
-			releasePointer(e.pointerId);
+		const startScrollListening = () => {
+			if (scrollListening || !targetRef) return;
+			window.addEventListener("scroll", onScroll, passiveCapture);
+			scrollAncestors = collectScrollableAncestors(targetRef);
+			for (const ancestor of scrollAncestors) ancestor.addEventListener("scroll", onAncestorScroll, passiveOptions);
+			scrollListening = true;
 		};
-		const onPointerCancel = (e) => {
-			releasePointer(e.pointerId);
-		};
-		const onWindowBlur = () => {
-			releasePointer();
+		const stopScrollListening = () => {
+			if (!scrollListening) return;
+			window.removeEventListener("scroll", onScroll, capture);
+			for (const ancestor of scrollAncestors) ancestor.removeEventListener("scroll", onAncestorScroll);
+			scrollAncestors.length = 0;
+			scrollListening = false;
 		};
 		const startOptionalObserving = () => {
 			if (treatZeroAreaAsHidden && !intersectionObserver && typeof IntersectionObserver !== "undefined") {
 				intersectionObserver = new IntersectionObserver(measureAndPublish);
 				intersectionObserver.observe(targetRef);
 			}
-			if (followScroll && !scrollListening) {
-				window.addEventListener("scroll", onScroll, passiveCapture);
-				scrollListening = true;
-			}
-			if (followGeometry && holdSelector && !geometryListening) {
-				window.addEventListener("pointerdown", onPointerDown, capture);
-				window.addEventListener("pointerup", onPointerUp, capture);
-				window.addEventListener("pointercancel", onPointerCancel, capture);
-				window.addEventListener("blur", onWindowBlur);
-				geometryListening = true;
-			}
+			if (followScroll && !scrollListening) startScrollListening();
 		};
 		const stopIntersection = () => {
 			if (!intersectionObserver) return;
@@ -648,25 +651,11 @@ var __viewAnchorCore = (function(exports) {
 			intersectionObserver = null;
 		};
 		const stopScroll = () => {
-			if (!scrollListening) return;
-			window.removeEventListener("scroll", onScroll, passiveCapture);
-			scrollListening = false;
-		};
-		const stopGeometryListeners = () => {
-			if (!geometryListening) return;
-			window.removeEventListener("pointerdown", onPointerDown, capture);
-			window.removeEventListener("pointerup", onPointerUp, capture);
-			window.removeEventListener("pointercancel", onPointerCancel, capture);
-			window.removeEventListener("blur", onWindowBlur);
-			geometryListening = false;
+			stopScrollListening();
 		};
 		const stopDisabledObserving = () => {
 			if (!treatZeroAreaAsHidden) stopIntersection();
 			if (!followScroll) stopScroll();
-			if ((!followGeometry || !holdSelector) && geometryListening) {
-				stopGeometryListeners();
-				heldPointerIds.clear();
-			}
 			if (!followGeometry) stopFrameFollow();
 		};
 		const startObserving = () => {
@@ -684,7 +673,6 @@ var __viewAnchorCore = (function(exports) {
 			window.removeEventListener("resize", measureAndPublish);
 			stopIntersection();
 			stopScroll();
-			stopGeometryListeners();
 			stopFrameFollow();
 		};
 		const applyOptions = () => {
@@ -722,14 +710,14 @@ var __viewAnchorCore = (function(exports) {
 		return {
 			update(next) {
 				if (disposed) return;
-				if (next.holdSelector) targetRef.matches(next.holdSelector);
 				publish = next.publish;
 				visible = next.visible;
 				treatZeroAreaAsHidden = next.treatZeroAreaAsHidden ?? false;
-				followScroll = next.followScroll ?? false;
+				const newFollowScroll = next.followScroll ?? false;
 				followGeometry = next.followGeometry ?? false;
-				holdSelector = next.holdSelector === void 0 ? DEFAULT_HOLD_SELECTOR : next.holdSelector;
 				dedupe = next.dedupe ?? true;
+				if (newFollowScroll && scrollListening) stopScrollListening();
+				followScroll = newFollowScroll;
 				if (visible && observer) {
 					stopDisabledObserving();
 					startOptionalObserving();
@@ -847,7 +835,6 @@ var __viewAnchorCore = (function(exports) {
 		};
 	}
 	//#endregion
-	exports.DEFAULT_HOLD_SELECTOR = DEFAULT_HOLD_SELECTOR;
 	exports.createSizeAnchor = createSizeAnchor;
 	exports.createViewAnchor = createViewAnchor;
 	exports.measurePlacement = measurePlacement;
@@ -955,7 +942,6 @@ var __viewAnchorCore = (function(exports) {
   })
   const publishA = placeSurface('a', slotA)
   const publishB = placeSurface('b', slotB)
-  // holdSelector is left at its default, '[role="separator"]'.
   const anchorA = createViewAnchor(slotA, { ...followOptions(), treatZeroAreaAsHidden: true, publish: publishA })
   const anchorB = createViewAnchor(slotB, { ...followOptions(), publish: publishB })
   const pulseAll = () => { anchorA.pulse(300); anchorB.pulse(300) }
@@ -1035,7 +1021,8 @@ var __viewAnchorCore = (function(exports) {
   })
   makeDraggable($('split-header'), () => header.offsetHeight, (start, d) => {
     header.style.height = clamp(Math.round(start + d.y), HEADER_COLLAPSED, 120) + 'px'
-    note('header edge: slots moved, same size → followGeometry while the separator is held')
+    pulseAll()
+    note('header edge: slots moved, same size → pulse() after each drag move')
   })
   scroller.addEventListener('scroll', () => {
     note(scrollEl.checked ? 'scroll → followScroll re-measured' : 'scroll with followScroll off → surfaces left behind')

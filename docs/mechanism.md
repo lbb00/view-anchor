@@ -37,9 +37,9 @@ const handle = createViewAnchor(target, {
 | `visible: false` | 发布 `{ visible: false }`，停止观察。`publish` 拒绝时不会自动重发，再次调用 `update()` 才会重发。 |
 | `dedupe`（默认 true） | 与上一次接受的 `Placement` 完全相同（含 `visible` 状态）时跳过发布；传 `false` 则每次测量都调用 `publish`，即使值不变。 |
 | `treatZeroAreaAsHidden`（默认 false） | 开启后，测出零面积的元素发布 `{ visible: false }`，并挂载 `IntersectionObserver` 捕捉 `display: none` 切换。 |
-| `followScroll`（默认 false） | 在捕获阶段监听 `window` 的 `scroll` 事件，祖先容器滚动时重新测量。 |
+| `followScroll`（默认 false） | 滚动时重新测量。`window` 捕获阶段监听处理能到达页面的事件；可滚动祖先监听处理脱离文档或在 Shadow DOM 中、到不了 `window` 的事件。同一次事件只处理一次，包括 `dedupe: false` 时。 |
 | `followGeometry`（默认 false） | 在需要时启动单帧 RAF 轮询，捕获没有 DOM 事件的祖先 transform 或布局位移；几何稳定后自动停止。也可通过 `pulse()` 手动触发。 |
-| `holdSelector`（默认 `[role="separator"]`） | 仅在 `followGeometry` 开启且 `holdSelector` 非空时挂载指针监听。捕获阶段 pointerdown 的目标命中 `closest(holdSelector)` 时打开 RAF 窗口并保持到该指针松开。传 `null` 可关闭；非法选择器会在调用处同步抛出 SyntaxError。 |
+| `pulse(durationMs?)` | 手动打开 RAF 跟随窗口，稳定后或超时后自动停止。分隔条拖拽时，每次 `pointermove` 更新布局后调用 `pulse()`；只在按下时调用一次无法覆盖停顿后的移动。 |
 | `update(opts)` | 应用一份完整的新选项并立即重新测量一次；省略的选项一律重置为其默认值（与创建时相同），不会保留上一次的设置。 |
 | `dispose()` / `AbortController.abort()` | 停止所有监听并释放资源，此后不再发布。 |
 
@@ -66,6 +66,8 @@ const ref = useViewAnchor({
 return <div ref={ref} />
 ```
 
+在 React 分隔条的 `pointermove` 处理函数中，先更新布局，再调用 `ref.pulse()`。这个方法作用于当前挂载的 anchor；未挂载或 `followGeometry` 关闭时不会启动帧跟随。
+
 | 时机 | 行为 |
 |---|---|
 | 挂载 | 创建 anchor 实例并开始监听 |
@@ -74,7 +76,7 @@ return <div ref={ref} />
 
 `deps`：`ResizeObserver` 只在元素自身的 border-box 改变时触发。如果页面上有某些状态会移动元素位置却不改变其尺寸（例如兄弟节点切换、路由跳转、复杂的外部布局更新），可将这些状态放入 `deps`。
 
-省略语义与 `createViewAnchor`、命令式 `update()` 相同：每次调用都会重新应用一份完整的选项，省略的选项一律重置为默认值，而不是沿用上一次的值。`treatZeroAreaAsHidden`、`followScroll`、`followGeometry` 省略即为 `false`；`holdSelector` 省略回到默认值 `[role="separator"]`；`dedupe` 省略回到默认值 `true`（传 `null`/`false` 才会分别关闭它们）。
+省略语义与 `createViewAnchor`、命令式 `update()` 相同：每次调用都会重新应用一份完整的选项，省略的选项一律重置为默认值，而不是沿用上一次的值。`treatZeroAreaAsHidden`、`followScroll`、`followGeometry` 省略即为 `false`；`dedupe` 省略回到默认值 `true`。
 
 React 18 在卸载时会传入 `ref(null)`，React 19 支持 ref 清理函数。适配层将卸载通知推迟一个微任务执行：React 19 在 StrictMode 下开发阶段的快速卸载重挂载会被就地取消，真正的卸载则在微任务内正常触发清理。
 

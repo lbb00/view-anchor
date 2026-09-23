@@ -85,13 +85,14 @@ try {
     export const useCallback = (callback) => callback
     export const useEffect = () => undefined
     export const useInsertionEffect = () => undefined
+    export const useMemo = (factory) => factory()
     export const useRef = (value) => ({ current: value })
     export const version = '18.3.1'
   `,
   )
 
   const react = runNode(
-    "const react = await import('view-anchor/react'); if (typeof react.useViewAnchor !== 'function') throw new Error('Missing useViewAnchor')",
+    "const react = await import('view-anchor/react'); if (typeof react.useViewAnchor !== 'function' || typeof react.useSizeAnchor !== 'function') throw new Error('Missing React hooks')",
   )
   if (react.status !== 0) {
     throw new Error(`The React package entry must load with React installed:\n${react.stderr}`)
@@ -139,6 +140,7 @@ try {
     import type { UseViewAnchorOptions, ViewAnchorRef } from 'view-anchor/react'
     const reactOptions = { visible: true, publish: publishPlacement } satisfies UseViewAnchorOptions
     const ref: ViewAnchorRef = useViewAnchor(reactOptions)
+    ref.pulse()
     void ref
 
     import {
@@ -193,7 +195,7 @@ try {
   )
 
   console.log(
-    'Package entry checks passed: protocol and root entries load without React; React entry loads with React installed and exports useViewAnchor.',
+    'Package entry checks passed: protocol and root entries load without React; React entry loads with React installed and exports both hooks.',
   )
 } finally {
   rmSync(tempRoot, { recursive: true, force: true })

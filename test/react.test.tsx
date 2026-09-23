@@ -847,129 +847,85 @@ describe('useViewAnchor — guard/scroll/geometry options', () => {
       bounds: { x: 10, y: 20, width: 30, height: 40 },
     })
   })
+})
 
-  it('holdSelector passed then omitted on rerender falls back to the default selector on the core (a later pointerdown on the default selector still opens frame following)', () => {
-    // A trivial "always return the same id" RAF stub can't distinguish a
-    // still-open frame following from a freshly re-opened one (the core only
-    // reschedules when its rafId is null), so this test needs a RAF stub
-    // that actually tracks pending frames and can be flushed to let the
-    // frame following close for real between the two pointerdown assertions.
-    class FakeRaf {
-      private cbs = new Map<number, FrameRequestCallback>()
-      private nextId = 1
-      request = vi.fn((cb: FrameRequestCallback): number => {
-        const id = this.nextId++
-        this.cbs.set(id, cb)
-        return id
-      })
-      cancel = vi.fn((id: number): void => {
-        this.cbs.delete(id)
-      })
-      flushFrame(ts = 0): void {
-        const pending = [...this.cbs.entries()]
-        this.cbs.clear()
-        for (const [, cb] of pending) cb(ts)
-      }
+describe('useViewAnchor: imperative frame following', () => {
+  it('exposes pulse on the stable callback ref and tracks moves after a drag pause', async () => {
+    const frames: Array<{ id: number; callback: FrameRequestCallback }> = []
+    let nextFrameId = 0
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = ++nextFrameId
+      frames.push({ id, callback })
+      return id
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+      const index = frames.findIndex((frame) => frame.id === id)
+      if (index !== -1) frames.splice(index, 1)
+    })
+    const nextFrame = (): void => {
+      frames.shift()?.callback(16)
     }
-    const raf = new FakeRaf()
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      raf.request as unknown as typeof window.requestAnimationFrame,
-    )
-    vi.stubGlobal(
-      'cancelAnimationFrame',
-      raf.cancel as unknown as typeof window.cancelAnimationFrame,
-    )
-    const publish = vi.fn()
-    let ref!: ReturnType<typeof useViewAnchor>
 
-    function Capture(props: { options: UseViewAnchorOptions }): null {
+    const publish = vi.fn<(placement: Placement) => void>()
+    let ref!: ViewAnchorRef
+    function Capture(props: { followGeometry: boolean }): null {
       // oxlint-disable-next-line react/globals -- test-only callback ref capture
-      ref = useViewAnchor(props.options)
+      ref = useViewAnchor({ visible: true, publish, followGeometry: props.followGeometry })
       return null
     }
 
-    // A custom selector (not the default) distinguishes "falls back to the
-    // default" from "keeps the previous value" once holdSelector is omitted
-    // on rerender.
-    const withHoldSelector: UseViewAnchorOptions = {
-      visible: true,
-      publish,
-      followGeometry: true,
-      holdSelector: '.custom-handle',
-    }
-    const { rerender } = render(<Capture options={withHoldSelector} />)
+    const { rerender } = render(<Capture followGeometry={true} />)
+    const originalRef = ref
     const el = document.createElement('div')
-    stubRect(el, { x: 0, y: 0, w: 10, h: 10 })
+    stubRect(el, { x: 0, y: 0, w: 100, h: 100 })
+    ref.pulse()
+    expect(frames).toHaveLength(0)
     act(() => {
       ref(el)
     })
+    publish.mockClear()
 
-    const customHandle = document.createElement('div')
-    customHandle.className = 'custom-handle'
-    document.body.appendChild(customHandle)
-    const splitter = document.createElement('div')
-    splitter.setAttribute('role', 'separator')
-    document.body.appendChild(splitter)
-
-    customHandle.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    expect(raf.request).toHaveBeenCalled()
-    // Release the hold, then flush two steady frames so frame following
-    // actually closes (STEADY_CLOSE_FRAMES) instead of staying scheduled —
-    // otherwise the splitter assertion below can't tell a real re-open from
-    // frame following that was already open.
-    window.dispatchEvent(new Event('pointerup'))
-    raf.flushFrame()
-    raf.flushFrame()
-    raf.request.mockClear()
-
-    // Every render applies a full configuration: an omitted option resets to
-    // its default. For holdSelector that default is the separator selector.
-    act(() => {
-      rerender(<Capture options={{ visible: true, publish, followGeometry: true }} />)
+    ref.pulse()
+    nextFrame()
+    nextFrame()
+    expect(frames).toHaveLength(0)
+    stubRect(el, { x: 50, y: 0, w: 100, h: 100 })
+    ref.pulse()
+    nextFrame()
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 50, y: 0, width: 100, height: 100 },
     })
 
-    // The old custom selector no longer matches.
-    customHandle.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    expect(raf.request).not.toHaveBeenCalled()
+    act(() => {
+      rerender(<Capture followGeometry={false} />)
+    })
+    expect(ref).toBe(originalRef)
+    frames.length = 0
+    ref.pulse()
+    expect(frames).toHaveLength(0)
 
-    // The default separator selector now matches.
-    splitter.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    expect(raf.request).toHaveBeenCalled()
-  })
+    await act(async () => {
+      ref(null)
+      await Promise.resolve()
+    })
+    ref.pulse()
+    expect(frames).toHaveLength(0)
 
-  it('holdSelector: null on the core disables frame following for a pointerdown on the default separator', () => {
-    const publish = vi.fn()
-    const raf = vi.fn(() => 1)
-    vi.stubGlobal('requestAnimationFrame', raf as unknown as typeof window.requestAnimationFrame)
-    vi.stubGlobal('cancelAnimationFrame', vi.fn())
-    let ref!: ReturnType<typeof useViewAnchor>
-
-    function Capture(props: { options: UseViewAnchorOptions }): null {
-      // oxlint-disable-next-line react/globals -- test-only callback ref capture
-      ref = useViewAnchor(props.options)
-      return null
-    }
-
-    const options: UseViewAnchorOptions = {
-      visible: true,
-      publish,
-      followGeometry: true,
-      holdSelector: null,
-    }
-    render(<Capture options={options} />)
-    const el = document.createElement('div')
-    stubRect(el, { x: 0, y: 0, w: 10, h: 10 })
+    act(() => {
+      rerender(<Capture followGeometry={true} />)
+    })
     act(() => {
       ref(el)
     })
-
-    const splitter = document.createElement('div')
-    splitter.setAttribute('role', 'separator')
-    document.body.appendChild(splitter)
-
-    splitter.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    expect(raf).not.toHaveBeenCalled()
+    stubRect(el, { x: 70, y: 0, w: 100, h: 100 })
+    publish.mockClear()
+    ref.pulse()
+    nextFrame()
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 70, y: 0, width: 100, height: 100 },
+    })
   })
 })
 
