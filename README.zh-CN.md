@@ -110,6 +110,25 @@ React 分隔条每次拖动更新布局后可调用 `ref.pulse()`。`useViewAnch
 
 两个 hook 都能在 React 18 和 19 的 StrictMode 重挂载中正常工作，不会发布过期帧。它们使用 `update()` 语义：省略的选项重置为默认值，而不是沿用上次的值。省略 `treatZeroAreaAsHidden`、`followScroll` 或 `followGeometry` 会重置为 `false`；省略 `dedupe` 会重置为 `true`。
 
+### 位置变了、尺寸没变
+
+`ResizeObserver` 只在目标元素自身尺寸变化时触发。如果布局变化只移动了占位元素、没改变它的尺寸（例如 dock 或面板布局切换），在新布局提交后调用 `remeasure()`。很多布局系统会提供一个每次提交都递增的计数或版本号，正好用来触发。
+
+```ts
+// 命令式：每次布局提交后重新测量一次，不改动任何选项。
+const handle = createViewAnchor(placeholderEl, { visible: true, publish, followScroll: true })
+onLayoutCommitted(() => handle.remeasure())
+```
+
+```tsx
+// React：布局版本号变化时重新测量。
+const layoutVersion = useLayoutVersion()
+const ref = useViewAnchor({ visible, publish })
+useEffect(() => ref.remeasure(), [ref, layoutVersion])
+```
+
+`remeasure()` 只测量一次，规则和尺寸变化触发时相同：`dedupe` 会跳过没变的矩形，`treatZeroAreaAsHidden` 照常生效，`visible` 为 `false` 时什么都不做。这个场景用它比用 `update()` 合适，因为 `update()` 要传完整选项，省略的会重置为默认值。只有布局带过渡动画、外部画面需要逐帧跟随时，才需要 `followGeometry: true` 加 `pulse()`。
+
 ### 由内容决定占位尺寸
 
 当外部画面的内容尺寸需要反过来调整占位元素时，在内容所在的文档中使用 `createSizeAnchor`：
@@ -169,22 +188,22 @@ if (decoded.ok) {
 
 ## API
 
-| 导出                                     | 类型        | 用途                                                                                                                 |
-| ---------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------- |
-| `createViewAnchor(target, opts)`         | 函数        | 发布带可见性的 `Placement`，可选 `followScroll`、`followGeometry`、`treatZeroAreaAsHidden`、`dedupe`，含 `pulse()`。 |
-| `measurePlacement(target)`               | 函数        | 读取当前矩形，返回 `{ visible: true, bounds }`。                                                                     |
-| `createSizeAnchor(target, opts)`         | 函数        | 用 `publish({ axis, extent })` 上报一个内容尺寸轴。                                                                  |
-| `useViewAnchor(opts)`                    | Hook        | `createViewAnchor` 的 React 适配，返回占位元素的 ref 回调。                                                          |
-| `useSizeAnchor(opts)`                    | Hook        | `createSizeAnchor` 的 React 适配，返回内容元素的 ref 回调。                                                          |
-| `Bounds`                                 | 类型        | `{ x, y, width, height }`，单位为 CSS 像素。                                                                         |
-| `Placement`                              | 类型        | `{ visible: true; bounds } \| { visible: false }`。                                                                  |
-| `Publisher<T>` / `PublishResult`         | 类型        | `publish` 回调的签名及其返回值（`void \| boolean`）。                                                                |
-| `ViewAnchorOptions` / `ViewAnchorHandle` | 类型        | `createViewAnchor` 的选项与句柄。句柄包含 `update()`、`pulse()` 和 `dispose()`。                                     |
-| `UseViewAnchorOptions` / `ViewAnchorRef` | 类型        | `useViewAnchor` 的选项与回调 ref 类型；ref 还提供 `pulse()`。                                                        |
-| `UseSizeAnchorOptions` / `SizeAnchorRef` | 类型        | `useSizeAnchor` 的选项与 ref 类型。                                                                                  |
-| `SizeAxis` / `SizeMeasurement`           | 类型        | 内容尺寸上报的轴和数据。                                                                                             |
-| `SizeAnchorOptions` / `SizeAnchorHandle` | 类型        | `createSizeAnchor` 的选项与句柄。句柄包含 `update()` 和 `dispose()`。                                                |
-| `view-anchor/protocol`                   | 函数 + 类型 | 消息封装、校验、排序和批处理。                                                                                       |
+| 导出                                     | 类型        | 用途                                                                                                                                  |
+| ---------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `createViewAnchor(target, opts)`         | 函数        | 发布带可见性的 `Placement`，可选 `followScroll`、`followGeometry`、`treatZeroAreaAsHidden`、`dedupe`，含 `pulse()` 和 `remeasure()`。 |
+| `measurePlacement(target)`               | 函数        | 读取当前矩形，返回 `{ visible: true, bounds }`。                                                                                      |
+| `createSizeAnchor(target, opts)`         | 函数        | 用 `publish({ axis, extent })` 上报一个内容尺寸轴。                                                                                   |
+| `useViewAnchor(opts)`                    | Hook        | `createViewAnchor` 的 React 适配，返回占位元素的 ref 回调。                                                                           |
+| `useSizeAnchor(opts)`                    | Hook        | `createSizeAnchor` 的 React 适配，返回内容元素的 ref 回调。                                                                           |
+| `Bounds`                                 | 类型        | `{ x, y, width, height }`，单位为 CSS 像素。                                                                                          |
+| `Placement`                              | 类型        | `{ visible: true; bounds } \| { visible: false }`。                                                                                   |
+| `Publisher<T>` / `PublishResult`         | 类型        | `publish` 回调的签名及其返回值（`void \| boolean`）。                                                                                 |
+| `ViewAnchorOptions` / `ViewAnchorHandle` | 类型        | `createViewAnchor` 的选项与句柄。句柄包含 `update()`、`pulse()`、`remeasure()` 和 `dispose()`。                                       |
+| `UseViewAnchorOptions` / `ViewAnchorRef` | 类型        | `useViewAnchor` 的选项与回调 ref 类型；ref 还提供 `pulse()` 和 `remeasure()`。                                                        |
+| `UseSizeAnchorOptions` / `SizeAnchorRef` | 类型        | `useSizeAnchor` 的选项与 ref 类型。                                                                                                   |
+| `SizeAxis` / `SizeMeasurement`           | 类型        | 内容尺寸上报的轴和数据。                                                                                                              |
+| `SizeAnchorOptions` / `SizeAnchorHandle` | 类型        | `createSizeAnchor` 的选项与句柄。句柄包含 `update()` 和 `dispose()`。                                                                 |
+| `view-anchor/protocol`                   | 函数 + 类型 | 消息封装、校验、排序和批处理。                                                                                                        |
 
 ## 版本承诺
 

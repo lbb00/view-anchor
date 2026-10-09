@@ -454,6 +454,131 @@ describe('createViewAnchor: update()', () => {
   })
 })
 
+// A layout commit can move the target without resizing it, so no observer fires.
+describe('createViewAnchor: remeasure()', () => {
+  it('publishes a moved, same-size target without changing options', () => {
+    const publish = vi.fn()
+    const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
+    const handle = createViewAnchor(el, opts({ visible: true, publish, followScroll: true }))
+    publish.mockClear()
+
+    setRect({ x: 40, y: 0, w: 100, h: 100 })
+    handle.remeasure()
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 40, y: 0, width: 100, height: 100 },
+    })
+
+    // followScroll is still on: a scroll measures the next move.
+    setRect({ x: 60, y: 0, w: 100, h: 100 })
+    window.dispatchEvent(new Event('scroll'))
+    expect(publish).toHaveBeenLastCalledWith({
+      visible: true,
+      bounds: { x: 60, y: 0, width: 100, height: 100 },
+    })
+    handle.dispose()
+  })
+
+  it('skips an unchanged rect under dedupe and publishes it when dedupe is false', () => {
+    const deduped = vi.fn()
+    const a = buildElement({ x: 0, y: 0, w: 100, h: 100 })
+    const handleA = createViewAnchor(a.el, opts({ visible: true, publish: deduped }))
+    deduped.mockClear()
+    handleA.remeasure()
+    expect(deduped).not.toHaveBeenCalled()
+
+    const every = vi.fn()
+    const b = buildElement({ x: 0, y: 0, w: 100, h: 100 })
+    const handleB = createViewAnchor(b.el, opts({ visible: true, publish: every, dedupe: false }))
+    every.mockClear()
+    handleB.remeasure()
+    expect(every).toHaveBeenCalledTimes(1)
+  })
+
+  it('applies treatZeroAreaAsHidden to the measured rect', () => {
+    const publish = vi.fn()
+    const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
+    const handle = createViewAnchor(
+      el,
+      opts({ visible: true, publish, treatZeroAreaAsHidden: true }),
+    )
+    publish.mockClear()
+
+    setRect({ x: 0, y: 0, w: 0, h: 100 })
+    handle.remeasure()
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith({ visible: false })
+    handle.dispose()
+  })
+
+  it('does nothing while hidden or after dispose', () => {
+    const publish = vi.fn()
+    const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
+    const handle = createViewAnchor(el, opts({ visible: false, publish }))
+    publish.mockClear()
+
+    setRect({ x: 40, y: 0, w: 100, h: 100 })
+    handle.remeasure()
+    expect(publish).not.toHaveBeenCalled()
+
+    handle.update({ visible: true, publish })
+    handle.dispose()
+    publish.mockClear()
+    setRect({ x: 80, y: 0, w: 100, h: 100 })
+    handle.remeasure()
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('keeps the last accepted rect when a nested remeasure is also rejected', () => {
+    const at = (x: number): Placement => ({
+      visible: true,
+      bounds: { x, y: 0, width: 100, height: 100 },
+    })
+    const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
+    let reject = false
+    const publish = vi.fn((p: Placement) => {
+      if (!reject) return undefined
+      if (p.visible && p.bounds.x === 40) {
+        setRect({ x: 80, y: 0, w: 100, h: 100 })
+        handle.remeasure()
+      }
+      return false
+    })
+    // Created before rejecting starts, so the initial publish never reads handle.
+    const handle = createViewAnchor(el, opts({ visible: true, publish }))
+
+    reject = true
+    setRect({ x: 40, y: 0, w: 100, h: 100 })
+    handle.remeasure()
+    expect(publish.mock.calls.map(([p]) => p)).toEqual([at(0), at(40), at(80)])
+
+    // Neither 40 nor 80 was accepted, so a retry at 40 must publish again.
+    reject = false
+    publish.mockClear()
+    setRect({ x: 40, y: 0, w: 100, h: 100 })
+    handle.remeasure()
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith(at(40))
+    handle.dispose()
+  })
+
+  it('does not open frame following even when followGeometry is on', () => {
+    const publish = vi.fn()
+    const { el, setRect } = buildElement({ x: 0, y: 0, w: 100, h: 100 })
+    const handle = createViewAnchor(el, opts({ visible: true, publish, followGeometry: true }))
+
+    setRect({ x: 40, y: 0, w: 100, h: 100 })
+    handle.remeasure()
+    expect(publish).toHaveBeenLastCalledWith({
+      visible: true,
+      bounds: { x: 40, y: 0, width: 100, height: 100 },
+    })
+    expect(rafSpy).not.toHaveBeenCalled()
+    handle.dispose()
+  })
+})
+
 describe('createViewAnchor: dispose()', () => {
   it('disconnects the observer and removes the resize listener', () => {
     const publish = vi.fn()

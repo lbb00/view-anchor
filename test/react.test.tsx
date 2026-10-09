@@ -929,6 +929,96 @@ describe('useViewAnchor: imperative frame following', () => {
   })
 })
 
+describe('useViewAnchor: remeasure', () => {
+  it('exposes remeasure on the stable callback ref and publishes a same-size move', async () => {
+    const publish = vi.fn<(placement: Placement) => void>()
+    let ref!: ViewAnchorRef
+    function Capture(props: { revision: number }): null {
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
+      ref = useViewAnchor({ visible: true, publish, followScroll: props.revision > 0 })
+      return null
+    }
+
+    const { rerender } = render(<Capture revision={0} />)
+    const originalRef = ref
+    const el = document.createElement('div')
+    stubRect(el, { x: 0, y: 0, w: 100, h: 100 })
+    ref.remeasure()
+    expect(publish).not.toHaveBeenCalled()
+    act(() => {
+      ref(el)
+    })
+    publish.mockClear()
+
+    stubRect(el, { x: 40, y: 0, w: 100, h: 100 })
+    ref.remeasure()
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 40, y: 0, width: 100, height: 100 },
+    })
+
+    act(() => {
+      rerender(<Capture revision={1} />)
+    })
+    expect(ref).toBe(originalRef)
+
+    await act(async () => {
+      ref(null)
+      await Promise.resolve()
+    })
+    publish.mockClear()
+    stubRect(el, { x: 80, y: 0, w: 100, h: 100 })
+    ref.remeasure()
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  // Detach disposes the handle one microtask later; the element is gone before that.
+  it('does nothing between detach and the deferred dispose, and resumes on reattach', async () => {
+    const publish = vi.fn<(placement: Placement) => void>()
+    let ref!: ViewAnchorRef
+    function Capture(): null {
+      // oxlint-disable-next-line react/globals -- test-only callback ref capture
+      ref = useViewAnchor({ visible: true, publish })
+      return null
+    }
+
+    render(<Capture />)
+    const el = document.createElement('div')
+    stubRect(el, { x: 0, y: 0, w: 100, h: 100 })
+    act(() => {
+      ref(el)
+    })
+    publish.mockClear()
+
+    act(() => {
+      ref(null)
+      stubRect(el, { x: 40, y: 0, w: 100, h: 100 })
+      ref.remeasure()
+      // Reattaching the same element before the microtask keeps the anchor.
+      ref(el)
+      stubRect(el, { x: 60, y: 0, w: 100, h: 100 })
+      ref.remeasure()
+    })
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith({
+      visible: true,
+      bounds: { x: 60, y: 0, width: 100, height: 100 },
+    })
+
+    publish.mockClear()
+    stubRect(el, { x: 80, y: 0, w: 100, h: 100 })
+    await act(async () => {
+      ref(null)
+      ref.remeasure()
+      expect(publish).not.toHaveBeenCalled()
+      await Promise.resolve()
+    })
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith({ visible: false })
+  })
+})
+
 describe('useViewAnchor: dedupe option', () => {
   it('omitting dedupe defaults to true: a same-rect tick is skipped', () => {
     const publish = vi.fn()
