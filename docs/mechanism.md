@@ -19,7 +19,7 @@ flowchart LR
 
 ## createViewAnchor(target, opts)
 
-命令式核心接口，将外部画面绑定到目标元素，返回 `{ update, pulse, dispose }`。发布的值是一个显式可见性的判别联合类型 `Placement`，区分“确实可见但尺寸为 0x0”和“隐藏或未挂载”这两种情况：
+命令式核心接口，将外部画面绑定到目标元素，返回 `{ update, pulse, remeasure, dispose }`。发布的值是一个显式可见性的判别联合类型 `Placement`，区分“确实可见但尺寸为 0x0”和“隐藏或未挂载”这两种情况：
 
 ```ts
 const handle = createViewAnchor(target, {
@@ -40,6 +40,7 @@ const handle = createViewAnchor(target, {
 | `followScroll`（默认 false） | 滚动时重新测量。`window` 捕获阶段监听处理能到达页面的事件；可滚动祖先监听处理脱离文档或在 Shadow DOM 中、到不了 `window` 的事件。同一次事件只处理一次，包括 `dedupe: false` 时。 |
 | `followGeometry`（默认 false） | 在需要时启动单帧 RAF 轮询，捕获没有 DOM 事件的祖先 transform 或布局位移；几何稳定后自动停止。也可通过 `pulse()` 手动触发。 |
 | `pulse(durationMs?)` | 手动打开 RAF 跟随窗口，稳定后或超时后自动停止。分隔条拖拽时，每次 `pointermove` 更新布局后调用 `pulse()`；只在按下时调用一次无法覆盖停顿后的移动。 |
+| `remeasure()` | 按当前选项立即测量一次并发布，用于位置变了、尺寸没变的情况（例如布局提交后）。和尺寸变化触发时规则相同：遵守 `dedupe` 和 `treatZeroAreaAsHidden`，不启动逐帧跟随；`visible` 为 `false` 或已释放时不做任何事。不需要传选项，所以不会把省略的选项重置。 |
 | `update(opts)` | 应用一份完整的新选项并立即重新测量一次；省略的选项一律重置为其默认值（与创建时相同），不会保留上一次的设置。 |
 | `dispose()` / `AbortController.abort()` | 停止所有监听并释放资源，此后不再发布。 |
 
@@ -76,7 +77,7 @@ return <div ref={ref} />
 | `opts` 或 `deps` 变化 | 调用 `update` 更新参数 |
 | 卸载 | 在 microtask 内发布 `{ visible: false }` 并释放资源；如果之前的隐藏已被接受则不再重复发送，被拒绝过则补发一次 |
 
-`deps`：`ResizeObserver` 只在元素自身的 border-box 改变时触发。如果页面上有某些状态会移动元素位置却不改变其尺寸（例如兄弟节点切换、路由跳转、复杂的外部布局更新），可将这些状态放入 `deps`。
+`deps`：`ResizeObserver` 只在元素自身的 border-box 改变时触发。如果页面上有某些状态会移动元素位置却不改变其尺寸（例如兄弟节点切换、路由跳转、复杂的外部布局更新），可将这些状态放入 `deps`，或者在它们变化后调用 `ref.remeasure()`；后者只重新测量，不重新应用选项。完整例子见 README 的“位置变了、尺寸没变”一节。
 
 省略语义与 `createViewAnchor`、命令式 `update()` 相同：每次调用都会重新应用一份完整的选项，省略的选项一律重置为默认值，而不是沿用上一次的值。`treatZeroAreaAsHidden`、`followScroll`、`followGeometry` 省略即为 `false`；`dedupe` 省略回到默认值 `true`。
 

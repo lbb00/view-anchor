@@ -83,6 +83,14 @@ export interface ViewAnchorHandle {
    * slowly (sub-pixel movement in its first frames) may not be followed to the end.
    */
   pulse(durationMs?: number): void
+  /**
+   * Measure once now and publish under the current options, for moves no
+   * observer sees (e.g. a layout commit that keeps the target's size).
+   * Follows the same rules as a ResizeObserver tick: dedupe and
+   * treatZeroAreaAsHidden apply, and frame following is not opened.
+   * No-op while visible is false or after dispose().
+   */
+  remeasure(): void
 }
 
 /**
@@ -178,7 +186,6 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
   const capture = { capture: true }
   const passiveOptions = { passive: true }
   let lastPublished: Placement | null = null
-  let publicationRevision = 0
   let disposed = false
 
   // --- Frame following (followGeometry) state ---
@@ -214,16 +221,20 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
 
   const publishPlacement = (candidate: Placement): boolean => {
     const previous = lastPublished
-    const attempt = ++publicationRevision
     lastPublished = candidate
+    // Roll back only while lastPublished still holds this candidate. A nested
+    // publish that was accepted, or a reentrant update(), replaced it and wins.
+    // A nested publish that was rejected rolled back to this candidate, which
+    // was never accepted either. A reentrant dispose() cleared it for good.
+    const rollBack = (): void => {
+      if (lastPublished === candidate && !disposed) lastPublished = previous
+    }
     try {
       const accepted = publish(candidate) !== false
-      // A reentrant dispose() during publish() already cleared lastPublished;
-      // do not resurrect the pre-dispose value over that terminal state.
-      if (!accepted && publicationRevision === attempt && !disposed) lastPublished = previous
+      if (!accepted) rollBack()
       return accepted
     } catch (error) {
-      if (publicationRevision === attempt && !disposed) lastPublished = previous
+      rollBack()
       throw error
     }
   }
@@ -471,5 +482,6 @@ export function createViewAnchor(target: HTMLElement, opts: ViewAnchorOptions): 
       }
       startFrameFollow()
     },
+    remeasure: measureAndPublish,
   }
 }

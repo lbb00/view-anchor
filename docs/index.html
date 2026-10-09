@@ -520,7 +520,6 @@ var __viewAnchorCore = (function(exports) {
 		const capture = { capture: true };
 		const passiveOptions = { passive: true };
 		let lastPublished = null;
-		let publicationRevision = 0;
 		let disposed = false;
 		let rafId = null;
 		let steadyFrames = 0;
@@ -538,14 +537,16 @@ var __viewAnchorCore = (function(exports) {
 		};
 		const publishPlacement = (candidate) => {
 			const previous = lastPublished;
-			const attempt = ++publicationRevision;
 			lastPublished = candidate;
+			const rollBack = () => {
+				if (lastPublished === candidate && !disposed) lastPublished = previous;
+			};
 			try {
 				const accepted = publish(candidate) !== false;
-				if (!accepted && publicationRevision === attempt && !disposed) lastPublished = previous;
+				if (!accepted) rollBack();
 				return accepted;
 			} catch (error) {
-				if (publicationRevision === attempt && !disposed) lastPublished = previous;
+				rollBack();
 				throw error;
 			}
 		};
@@ -732,7 +733,8 @@ var __viewAnchorCore = (function(exports) {
 					followDeadline = followDeadline === null ? next : Math.max(followDeadline, next);
 				}
 				startFrameFollow();
-			}
+			},
+			remeasure: measureAndPublish
 		};
 	}
 	//#endregion

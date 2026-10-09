@@ -126,6 +126,25 @@ For a splitter controlled by React, call `ref.pulse()` after each active pointer
 
 Both hooks survive React 18 and 19 StrictMode double-mounting without publishing stale frames. They use `update()` semantics: an omitted option resets to its default, not the previous value. An omitted `treatZeroAreaAsHidden`, `followScroll`, or `followGeometry` counts as `false`; an omitted `dedupe` resets to `true`.
 
+### Position changes without a size change
+
+`ResizeObserver` only fires when the target's own size changes. If a layout change moves the placeholder without resizing it (for example a dock or panel layout switch), call `remeasure()` after the new layout is committed. Many layout systems expose a counter or version that increases on every commit; that works well as the trigger.
+
+```ts
+// Imperative: measure again after each layout commit. Options are untouched.
+const handle = createViewAnchor(placeholderEl, { visible: true, publish, followScroll: true })
+onLayoutCommitted(() => handle.remeasure())
+```
+
+```tsx
+// React: remeasure when the layout version changes.
+const layoutVersion = useLayoutVersion()
+const ref = useViewAnchor({ visible, publish })
+useEffect(() => ref.remeasure(), [ref, layoutVersion])
+```
+
+`remeasure()` measures once and follows the same rules as a resize: `dedupe` skips an unchanged rectangle, `treatZeroAreaAsHidden` still applies, and it does nothing while `visible` is `false`. Prefer it over `update()`, which takes a full set of options and resets anything omitted. Use `followGeometry: true` with `pulse()` only when the layout animates into place and the surface must follow every frame.
+
 ### Let content drive the size
 
 Sometimes the hosted surface's size should come from its own content, for example a toolbar rendered by downstream code. Run `createSizeAnchor` inside the hosted document. It reports the content size back so a DOM placeholder in the host can grow to match:
@@ -180,22 +199,22 @@ The full contract is in [docs/protocol.md](./docs/protocol.md).
 
 ## API
 
-| Export                                                            | Kind              | Purpose                                                                                                                   |
-| ----------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `createViewAnchor(target, opts)`                                  | function          | Publish a `Placement`, with opt-in `followScroll` / `followGeometry` / `treatZeroAreaAsHidden` / `dedupe`, and `pulse()`. |
-| `measurePlacement(target)`                                        | function          | Pure measurement: wraps the target rect as `{ visible: true, bounds }`.                                                   |
-| `createSizeAnchor(target, opts)`                                  | function          | Call `publish({ axis, extent })` with one content-size axis.                                                              |
-| `useViewAnchor(opts)` from `view-anchor/react`                    | hook              | React adapter for `createViewAnchor`, returning a ref callback for a placeholder element.                                 |
-| `useSizeAnchor(opts)` from `view-anchor/react`                    | hook              | React adapter for `createSizeAnchor`, returning a ref callback for a content element.                                     |
-| `Bounds`                                                          | type              | `{ x, y, width, height }` in CSS pixels.                                                                                  |
-| `Placement`                                                       | type              | `{ visible: true; bounds } \| { visible: false }`.                                                                        |
-| `Publisher<T>` / `PublishResult`                                  | type              | Signature of the `publish` callback and its return value (`void \| boolean`).                                             |
-| `ViewAnchorOptions` / `ViewAnchorHandle`                          | type              | Options and handle for `createViewAnchor`. Handle includes `update()`, `pulse()`, and `dispose()`.                        |
-| `UseViewAnchorOptions` / `ViewAnchorRef` from `view-anchor/react` | type              | Options and callback ref for `useViewAnchor`; the ref also has `pulse()`.                                                 |
-| `UseSizeAnchorOptions` / `SizeAnchorRef` from `view-anchor/react` | type              | Options and ref shape for `useSizeAnchor`.                                                                                |
-| `SizeAxis` / `SizeMeasurement`                                    | type              | Axis and payload types for the reverse direction.                                                                         |
-| `SizeAnchorOptions` / `SizeAnchorHandle`                          | type              | Options and handle for `createSizeAnchor`. Handle includes `update()` and `dispose()`.                                    |
-| `view-anchor/protocol`                                            | functions + types | Versioned messages, strict decoding, sequence guards, message publishers, and microtask batching.                         |
+| Export                                                            | Kind              | Purpose                                                                                                                                  |
+| ----------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `createViewAnchor(target, opts)`                                  | function          | Publish a `Placement`, with opt-in `followScroll` / `followGeometry` / `treatZeroAreaAsHidden` / `dedupe`, `pulse()`, and `remeasure()`. |
+| `measurePlacement(target)`                                        | function          | Pure measurement: wraps the target rect as `{ visible: true, bounds }`.                                                                  |
+| `createSizeAnchor(target, opts)`                                  | function          | Call `publish({ axis, extent })` with one content-size axis.                                                                             |
+| `useViewAnchor(opts)` from `view-anchor/react`                    | hook              | React adapter for `createViewAnchor`, returning a ref callback for a placeholder element.                                                |
+| `useSizeAnchor(opts)` from `view-anchor/react`                    | hook              | React adapter for `createSizeAnchor`, returning a ref callback for a content element.                                                    |
+| `Bounds`                                                          | type              | `{ x, y, width, height }` in CSS pixels.                                                                                                 |
+| `Placement`                                                       | type              | `{ visible: true; bounds } \| { visible: false }`.                                                                                       |
+| `Publisher<T>` / `PublishResult`                                  | type              | Signature of the `publish` callback and its return value (`void \| boolean`).                                                            |
+| `ViewAnchorOptions` / `ViewAnchorHandle`                          | type              | Options and handle for `createViewAnchor`. Handle includes `update()`, `pulse()`, `remeasure()`, and `dispose()`.                        |
+| `UseViewAnchorOptions` / `ViewAnchorRef` from `view-anchor/react` | type              | Options and callback ref for `useViewAnchor`; the ref also has `pulse()` and `remeasure()`.                                              |
+| `UseSizeAnchorOptions` / `SizeAnchorRef` from `view-anchor/react` | type              | Options and ref shape for `useSizeAnchor`.                                                                                               |
+| `SizeAxis` / `SizeMeasurement`                                    | type              | Axis and payload types for the reverse direction.                                                                                        |
+| `SizeAnchorOptions` / `SizeAnchorHandle`                          | type              | Options and handle for `createSizeAnchor`. Handle includes `update()` and `dispose()`.                                                   |
+| `view-anchor/protocol`                                            | functions + types | Versioned messages, strict decoding, sequence guards, message publishers, and microtask batching.                                        |
 
 ## Versioning
 

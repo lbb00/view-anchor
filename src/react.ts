@@ -17,8 +17,11 @@ export interface UseViewAnchorOptions extends ViewAnchorOptions {
 /** Compatible with React 18's null callback and React 19's ref cleanup. */
 type AnchorRef = (el: HTMLElement | null) => void | (() => void)
 
-/** Callback ref with an imperative trigger for geometry changes React cannot observe. */
-export type ViewAnchorRef = AnchorRef & { pulse(durationMs?: number): void }
+/** Callback ref with imperative triggers for geometry changes React cannot observe. */
+export type ViewAnchorRef = AnchorRef & {
+  pulse(durationMs?: number): void
+  remeasure(): void
+}
 
 type AnchorHandle = { dispose(): void }
 
@@ -42,7 +45,7 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
   options: Options,
   applied: ReadonlyArray<unknown>,
   adapter: LifecycleAdapter<Options, Handle>,
-): { ref: AnchorRef; handleRef: { current: Handle | null } } {
+): { ref: AnchorRef; attachedHandle: () => Handle | null } {
   const handleRef = useRef<Handle | null>(null)
   const elementRef = useRef<HTMLElement | null>(null)
   const optionsRef = useRef(options)
@@ -60,9 +63,13 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
   // Tracks applied state across renders where the deps array reference changes.
   const lastAppliedOptionsRef = useRef(options)
   const detachTokenRef = useRef(0)
+  // The handle outlives a detach by one microtask; imperative triggers must
+  // not measure the element that was just removed.
+  const detachPendingRef = useRef(false)
 
   const cancelPendingDetach = (): void => {
     detachTokenRef.current++
+    detachPendingRef.current = false
   }
 
   const collapseAndDispose = (): void => {
@@ -80,6 +87,7 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
 
   const deferDetach = (element: HTMLElement): void => {
     const token = ++detachTokenRef.current
+    detachPendingRef.current = true
     queueMicrotask(() => {
       if (detachTokenRef.current !== token || elementRef.current !== element) return
       elementRef.current = null
@@ -153,7 +161,12 @@ function useAnchorRef<Options, Handle extends AnchorHandle>(
     }
   }, [])
 
-  return { ref, handleRef }
+  const attachedHandle = useCallback(
+    () => (detachPendingRef.current ? null : handleRef.current),
+    [],
+  )
+
+  return { ref, attachedHandle }
 }
 
 // Whether each handle's latest { visible: false } was accepted. The core does
@@ -194,7 +207,7 @@ const viewAdapter: LifecycleAdapter<ViewAnchorOptions, ViewAnchorHandle> = {
 
 /** Bind the explicit Placement API to a DOM element callback ref. */
 export function useViewAnchor(options: UseViewAnchorOptions): ViewAnchorRef {
-  const { ref: attach, handleRef } = useAnchorRef(
+  const { ref: attach, attachedHandle } = useAnchorRef(
     options,
     [
       options.visible,
@@ -208,14 +221,13 @@ export function useViewAnchor(options: UseViewAnchorOptions): ViewAnchorRef {
     viewAdapter,
   )
   const pulse = useCallback(
-    (durationMs?: number) => handleRef.current?.pulse(durationMs),
-    [handleRef],
+    (durationMs?: number) => attachedHandle()?.pulse(durationMs),
+    [attachedHandle],
   )
-  // The new callback captures the handle, but only reads it when pulse() is called.
+  const remeasure = useCallback(() => attachedHandle()?.remeasure(), [attachedHandle])
   return useMemo(
-    // oxlint-disable-next-line react/refs
-    () => Object.assign((element: HTMLElement | null) => attach(element), { pulse }),
-    [attach, pulse],
+    () => Object.assign((element: HTMLElement | null) => attach(element), { pulse, remeasure }),
+    [attach, pulse, remeasure],
   )
 }
 
