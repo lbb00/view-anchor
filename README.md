@@ -229,7 +229,7 @@ Within 1.x, `view-anchor` does not remove or rename any public export from `.`, 
 
 ## Contributing
 
-Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, and `pnpm build`. `pnpm benchmark` prints the data used to update the performance report.
+Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, `pnpm jit`, and `pnpm build`. `pnpm benchmark` prints the data used to update the performance report. `pnpm jit` checks that V8 still optimizes the hot paths.
 
 Changes that affect a published version must include a Changeset. Run `pnpm changeset`, select the version bump, and describe the user-visible change. Merging into `main` opens a version PR; merging that PR publishes the package.
 

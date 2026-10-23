@@ -218,7 +218,7 @@ if (decoded.ok) {
 
 ## 参与贡献
 
-提交前运行 `pnpm lint`、`pnpm format:check`、`pnpm check-types`、`pnpm test` 和 `pnpm build`。`pnpm benchmark` 用于更新性能报告。
+提交前运行 `pnpm lint`、`pnpm format:check`、`pnpm check-types`、`pnpm test`、`pnpm jit` 和 `pnpm build`。`pnpm benchmark` 用于更新性能报告。`pnpm jit` 检查 V8 是否仍会优化热路径。
 
 ## 许可证
 
