@@ -632,8 +632,12 @@ async function runSelfTest(temporary) {
     (item) => item.file === 'jit-self-test.mjs' && item.name === 'readX',
   )
   if (!deopts.some((item) => item.reason.includes('wrong map'))) {
+    const saw = deopts.slice(0, 8).map((item) => formatDeopt(item))
     throw new Error(
-      'self-test did not record a wrong-map deopt, so this checker can no longer see JIT failures',
+      [
+        'self-test did not record a wrong-map deopt, so this checker can no longer see JIT failures',
+        saw.length === 0 ? 'saw: no readX deopt' : `saw: ${saw.join('; ')}`,
+      ].join('\n'),
     )
   }
 }
@@ -707,6 +711,10 @@ async function runSelfTestWorker(fixturePath) {
   let sink = 0
   const stable = { x: 1 }
   for (let index = 0; index < 200_000; index++) sink += readX(stable)
+  // Install optimized code before changing the map. A polymorphic call that
+  // lands first leaves no wrong-map deopt for the parser to see.
+  await pause(200)
+  for (let index = 0; index < 20_000; index++) sink += readX(stable)
   sink += readX({ y: 0, x: 1 })
   if (sink === 0) throw new Error('self-test did not run')
   await pause(200)
