@@ -18,4 +18,4 @@
 | `view-anchor/protocol` | 3,851B | 1,507B | 1,355B |
 | `view-anchor/react` | 5,117B | 2,089B | 1,884B |
 
-`pnpm benchmark` 的输出包含各单独导出的体积、CPU 和内存明细。`pnpm benchmark:v8` 会额外输出 V8 的优化和反优化日志。
+`pnpm benchmark` 的输出包含各单独导出的体积、CPU 和内存明细。`pnpm benchmark:v8` 会额外输出 V8 的优化和反优化日志。`pnpm jit` 用同一次打包结果做回归：热路径要升到对应的优化层，且库代码不能被反优化；它不比较耗时。

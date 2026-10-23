@@ -45,6 +45,9 @@ jobs:
       - name: Test
         run: pnpm run test
 
+      - name: JIT regression
+        run: pnpm run jit
+
       # `build` also regenerates the inlined core inside docs/index.html;
       # a dirty tree here means the committed demo drifted from src.
       - name: Build
