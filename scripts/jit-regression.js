@@ -489,9 +489,10 @@ const scenarios = [
     },
   },
   {
+    // onResize is often inlined into the caller, so it may have no compile of
+    // its own. A deopt there still fails the library-deopt check.
     name: 'size-stable',
     optimized: [
-      [sizeFile, 'onResize'],
       [sizeFile, 'publishFrame'],
       [sizeFile, 'measure'],
     ],
@@ -520,7 +521,6 @@ const scenarios = [
   {
     name: 'size-moving',
     optimized: [
-      [sizeFile, 'onResize'],
       [sizeFile, 'publishFrame'],
       [sizeFile, 'measure'],
       [sizeFile, 'publishExtent'],
