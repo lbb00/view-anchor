@@ -9,4 +9,10 @@ test-report*.json
 pawl.snapshot.json
 
 # Local agent handoff notes: session ids, absolute paths, recent prompts.
-.claude/WORKLOG.md
+.claude/
+
+# TLA+ artifacts
+.tla-cache/
+/specs/states/
+/states/
+

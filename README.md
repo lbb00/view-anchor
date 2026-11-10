@@ -225,11 +225,12 @@ Within 1.x, `view-anchor` does not remove or rename any public export from `.`, 
 - [docs/mechanism.md](./docs/mechanism.md): how the forward direction works. Synchronous publishing, default dedup and `dedupe: false`, the `Placement` / visibility / unmount contract, StrictMode behaviour. Includes the interactive 3D demo at [docs/index.html](./docs/index.html).
 - [docs/bidirectional-design.md](./docs/bidirectional-design.md): running both directions at once. Why the forward path is synchronous while the reverse path uses animation frames, single-axis ownership, and where the trust boundary sits.
 - [docs/protocol.md](./docs/protocol.md): message envelopes, validation, ordering, batching, and what happens on failure.
+- [specs/README.md](./specs/README.md): formal verification of the protocol and batcher with TLA+ and TLC model checking.
 - [docs/performance-report.md](./docs/performance-report.md): performance summary and export sizes.
 
 ## Contributing
 
-Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, `pnpm jit`, and `pnpm build`. `pnpm benchmark` prints the data used to update the performance report. `pnpm jit` checks that V8 still optimizes the hot paths.
+Before submitting, run `pnpm lint`, `pnpm format:check`, `pnpm check-types`, `pnpm test`, `pnpm tla:check`, `pnpm jit`, and `pnpm build`. `pnpm benchmark` prints the data used to update the performance report. `pnpm jit` checks that V8 still optimizes the hot paths.
 
 Changes that affect a published version must include a Changeset. Run `pnpm changeset`, select the version bump, and describe the user-visible change. Merging into `main` opens a version PR; merging that PR publishes the package.
 

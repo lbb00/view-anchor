@@ -115,3 +115,10 @@ if (result.ok) {
 - **批次上限只管条数**。`decodeGeometryWireValue` 的 `maxMessages` 只检查 `messages` 数组长度，不检查序列化后的总字节数；总体积仍需由传输层或应用自己限制。
 - **不负责传输本身**。协议不做重连、确认（ack）或定时重试。发送失败的消息会留在 `GeometryBatcher` 里，直到下一次 `publish()` 产生更新的消息，或显式调用 `flush()`，才会重新尝试。
 - **重建 publisher 会被当作旧消息**。同一个 `{ anchorId, generation }` 如果重新创建 `createPlacementMessagePublisher` / `createSizeMessagePublisher`，`seq` 会从 1 重新计数，很可能小于接收端已经记录的最大值而被 `guard` 丢弃。需要重置时应递增 `generation`，而不是重建同代次的 publisher。
+
+## 形式化验证 (TLA+)
+
+协议的核心机制（包括 `SequenceGuard` 的代次门槛与序列单调性、`GeometryBatcher` 的微任务合并、快照隔离与重入安全、对象身份隔离防护，以及非可靠传输通道下的端到端因果单调性与有效性）均已通过 **TLA+** 规范并在 TLC 模型检验器中完成验证。
+
+详细规范与验证说明见 [specs/README.md](../specs/README.md)。
+
