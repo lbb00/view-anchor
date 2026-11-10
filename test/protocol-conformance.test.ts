@@ -212,6 +212,62 @@ describe('TLA+ Model-Based Conformance: GeometryBatcher.tla', () => {
         const publishedEpochs = new WeakMap<GeometryMessage, number>()
         const deliveredWithEpoch: Array<{ msg: GeometryMessage; epoch: number }> = []
 
+        // Model state tracker directly mirroring GeometryBatcher.tla
+        interface ModelAnchorState {
+          g: number
+          p?: GeometryMessage
+          s?: GeometryMessage
+          pSeq?: number
+          sSeq?: number
+          id: number
+        }
+
+        const modelAnchors: Record<(typeof anchors)[number], ModelAnchorState | undefined> = {
+          a1: undefined,
+          a2: undefined,
+        }
+        let nextModelId = 1
+
+        const modelPublish = (msg: GeometryMessage) => {
+          const a = msg.anchorId as (typeof anchors)[number]
+          let st = modelAnchors[a]
+          if (st !== undefined && msg.generation < st.g) return
+          if (st === undefined || msg.generation > st.g) {
+            st = {
+              g: msg.generation,
+              p: undefined,
+              s: undefined,
+              pSeq: undefined,
+              sSeq: undefined,
+              id: nextModelId++,
+            }
+            modelAnchors[a] = st
+          }
+          if (msg.kind === 'placement') {
+            if (
+              (st.p === undefined || msg.seq > st.p.seq) &&
+              (st.pSeq === undefined || msg.seq > st.pSeq)
+            ) {
+              st.p = msg
+            }
+          } else {
+            if (
+              (st.s === undefined || msg.seq > st.s.seq) &&
+              (st.sSeq === undefined || msg.seq > st.sSeq)
+            ) {
+              st.s = msg
+            }
+          }
+        }
+
+        const modelClear = (anchorId?: (typeof anchors)[number]) => {
+          if (anchorId === undefined) {
+            for (const a of anchors) modelAnchors[a] = undefined
+          } else {
+            modelAnchors[anchorId] = undefined
+          }
+        }
+
         const publishToBatcher = (msg: GeometryMessage) => {
           publishedEpochs.set(msg, currentEpoch[msg.anchorId as (typeof anchors)[number]] ?? 0)
           batcher.publish(msg)
@@ -227,49 +283,120 @@ describe('TLA+ Model-Based Conformance: GeometryBatcher.tla', () => {
           }
         }
 
+        const executeFlush = (shouldFailSend: boolean, reentrantCb?: () => void): boolean => {
+          interface SnapshotItem {
+            msg: GeometryMessage
+            stateId: number
+          }
+          const expectedSnapshot: SnapshotItem[] = []
+          for (const a of anchors) {
+            const st = modelAnchors[a]
+            if (!st) continue
+            if (st.p !== undefined) expectedSnapshot.push({ msg: st.p, stateId: st.id })
+            if (st.s !== undefined) expectedSnapshot.push({ msg: st.s, stateId: st.id })
+          }
+
+          let sendInvoked = false
+          currentSendHandler = (batch) => {
+            sendInvoked = true
+
+            // Oracle Check: output batch must contain exactly the model's pending messages
+            expect(batch.messages.length).toBe(expectedSnapshot.length)
+            for (const item of expectedSnapshot) {
+              const matched = batch.messages.find(
+                (m) =>
+                  m.anchorId === item.msg.anchorId &&
+                  m.kind === item.msg.kind &&
+                  m.generation === item.msg.generation &&
+                  m.seq === item.msg.seq,
+              )
+              expect(matched).toBeDefined()
+            }
+
+            if (reentrantCb) {
+              reentrantCb()
+            }
+
+            if (shouldFailSend) {
+              return false
+            }
+
+            recordDelivered(batch)
+            return true
+          }
+
+          const flushed = batcher.flush()
+
+          if (expectedSnapshot.length === 0) {
+            expect(sendInvoked).toBe(false)
+            expect(flushed).toBe(false)
+          } else if (shouldFailSend) {
+            expect(sendInvoked).toBe(true)
+            expect(flushed).toBe(false)
+            // On failure, pending messages remain in model to be retried
+          } else {
+            expect(sendInvoked).toBe(true)
+            expect(flushed).toBe(true)
+            // On success, update model confirmed sequences and unset sent messages if identity matches
+            for (const item of expectedSnapshot) {
+              const st = modelAnchors[item.msg.anchorId as (typeof anchors)[number]]
+              if (st !== undefined && st.id === item.stateId) {
+                if (item.msg.kind === 'placement') {
+                  if (st.pSeq === undefined || item.msg.seq > st.pSeq) {
+                    st.pSeq = item.msg.seq
+                  }
+                  if (st.p === item.msg) {
+                    st.p = undefined
+                  }
+                } else {
+                  if (st.sSeq === undefined || item.msg.seq > st.sSeq) {
+                    st.sSeq = item.msg.seq
+                  }
+                  if (st.s === item.msg) {
+                    st.s = undefined
+                  }
+                }
+              }
+            }
+          }
+
+          return flushed
+        }
+
         // Run actions, occasionally triggering reentrancy inside send()
         for (const act of actionList) {
           if (act.type === 'publish') {
-            publishToBatcher(makeMsg(act.anchorId, act.generation, act.kind, act.seq))
+            const msg = makeMsg(act.anchorId, act.generation, act.kind, act.seq)
+            modelPublish(msg)
+            publishToBatcher(msg)
           } else if (act.type === 'clear') {
             currentEpoch[act.anchorId]++
+            modelClear(act.anchorId)
             batcher.clear(act.anchorId)
           } else if (act.type === 'flush') {
-            currentSendHandler = (batch) => {
-              if (act.shouldFailSend) return false
-              recordDelivered(batch)
-              return true
-            }
-            batcher.flush()
+            executeFlush(act.shouldFailSend ?? false)
           } else if (act.type === 'reentrantPublish') {
             // Synchronous reentrancy during send()
-            currentSendHandler = (batch) => {
-              // Reentrant call!
-              publishToBatcher(makeMsg(act.anchorId, act.generation, act.kind, act.seq))
-              if (act.shouldFailSend) return false
-              recordDelivered(batch)
-              return true
-            }
-            batcher.flush()
+            const reentrantMsg = makeMsg(act.anchorId, act.generation, act.kind, act.seq)
+            executeFlush(act.shouldFailSend ?? false, () => {
+              modelPublish(reentrantMsg)
+              publishToBatcher(reentrantMsg)
+            })
           } else if (act.type === 'reentrantClear') {
             // Reentrant clear during send()
-            currentSendHandler = (batch) => {
+            executeFlush(act.shouldFailSend ?? false, () => {
               currentEpoch[act.anchorId]++
+              modelClear(act.anchorId)
               batcher.clear(act.anchorId)
-              if (act.shouldFailSend) return false
-              recordDelivered(batch)
-              return true
-            }
-            batcher.flush()
+            })
           }
         }
 
         // Final flush to drain any remaining retries
-        currentSendHandler = (batch) => {
-          recordDelivered(batch)
-          return true
-        }
-        batcher.flush()
+        executeFlush(false)
+
+        // After final drain, subsequent flush must return false
+        expect(batcher.flush()).toBe(false)
 
         // Verify TLA+ Invariant: ConfirmedSeqMonotonic on delivered messages within the same clear epoch
         for (const a of anchors) {
