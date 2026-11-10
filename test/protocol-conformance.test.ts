@@ -333,9 +333,11 @@ describe('TLA+ Model-Based Conformance: ViewAnchorProtocol.tla', () => {
             publishSize: (s: { axis: 'block' | 'inline'; extent: number }) => boolean
           }
         > = {}
+        const genSeqCounters: Record<number, { placement: number; size: number }> = {}
 
         const getPublishers = (gen: number) => {
           if (!publishers[gen]) {
+            genSeqCounters[gen] = { placement: 0, size: 0 }
             publishers[gen] = {
               publishPlacement: createPlacementMessagePublisher(
                 { anchorId, generation: gen },
@@ -350,18 +352,21 @@ describe('TLA+ Model-Based Conformance: ViewAnchorProtocol.tla', () => {
           return publishers[gen]!
         }
 
-        const generatedStates: Array<{ kind: 'placement' | 'size'; gen: number }> = []
+        const generatedStates: Array<{ kind: 'placement' | 'size'; gen: number; seq: number }> = []
 
         // 2. Generate publishes strictly driven by fast-check inputs
         for (let i = 0; i < ops.length; i++) {
           const op = ops[i]!
           const pubs = getPublishers(op.generation)
           if (op.kind === 'placement') {
+            const seq = ++genSeqCounters[op.generation]!.placement
             pubs.publishPlacement({ visible: true, bounds: { x: 1, y: 1, width: 10, height: 10 } })
+            generatedStates.push({ kind: op.kind, gen: op.generation, seq })
           } else {
+            const seq = ++genSeqCounters[op.generation]!.size
             pubs.publishSize({ axis: 'block', extent: 20 })
+            generatedStates.push({ kind: op.kind, gen: op.generation, seq })
           }
-          generatedStates.push({ kind: op.kind, gen: op.generation })
 
           if (op.flushImmediately) {
             batcher.flush()
@@ -417,10 +422,12 @@ describe('TLA+ Model-Based Conformance: ViewAnchorProtocol.tla', () => {
               appliedGeometry[kind] = { gen: msg.generation, seq: msg.seq }
 
               // ASSERT TLA+ Invariant: Soundness
-              // The message must correspond to an actual produced generation
-              expect(generatedStates.some((s) => s.kind === kind && s.gen === msg.generation)).toBe(
-                true,
-              )
+              // The message must correspond to an actual produced generation and sequence
+              expect(
+                generatedStates.some(
+                  (s) => s.kind === kind && s.gen === msg.generation && s.seq === msg.seq,
+                ),
+              ).toBe(true)
             }
           }
         }
