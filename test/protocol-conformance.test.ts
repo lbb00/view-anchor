@@ -296,25 +296,21 @@ describe('TLA+ Model-Based Conformance: GeometryBatcher.tla', () => {
             if (st.s !== undefined) expectedSnapshot.push({ msg: st.s, stateId: st.id })
           }
 
+          let capturedBatch: GeometryBatch | undefined
           let sendInvoked = false
+          let callbackError: unknown
+
           currentSendHandler = (batch) => {
             sendInvoked = true
-
-            // Oracle Check: output batch must contain exactly the model's pending messages
-            expect(batch.messages.length).toBe(expectedSnapshot.length)
-            for (const item of expectedSnapshot) {
-              const matched = batch.messages.find(
-                (m) =>
-                  m.anchorId === item.msg.anchorId &&
-                  m.kind === item.msg.kind &&
-                  m.generation === item.msg.generation &&
-                  m.seq === item.msg.seq,
-              )
-              expect(matched).toBeDefined()
-            }
+            capturedBatch = batch
 
             if (reentrantCb) {
-              reentrantCb()
+              try {
+                reentrantCb()
+              } catch (err) {
+                callbackError = err
+                throw err
+              }
             }
 
             if (shouldFailSend) {
@@ -327,33 +323,54 @@ describe('TLA+ Model-Based Conformance: GeometryBatcher.tla', () => {
 
           const flushed = batcher.flush()
 
+          if (callbackError) {
+            throw callbackError
+          }
+
           if (expectedSnapshot.length === 0) {
             expect(sendInvoked).toBe(false)
             expect(flushed).toBe(false)
-          } else if (shouldFailSend) {
-            expect(sendInvoked).toBe(true)
-            expect(flushed).toBe(false)
-            // On failure, pending messages remain in model to be retried
           } else {
             expect(sendInvoked).toBe(true)
-            expect(flushed).toBe(true)
-            // On success, update model confirmed sequences and unset sent messages if identity matches
+            expect(capturedBatch).toBeDefined()
+
+            // Oracle Check: output batch must contain exactly the model's pending messages.
+            // Verified OUTSIDE the send callback so try/catch in batcher never masks failures.
+            expect(capturedBatch!.messages.length).toBe(expectedSnapshot.length)
             for (const item of expectedSnapshot) {
-              const st = modelAnchors[item.msg.anchorId as (typeof anchors)[number]]
-              if (st !== undefined && st.id === item.stateId) {
-                if (item.msg.kind === 'placement') {
-                  if (st.pSeq === undefined || item.msg.seq > st.pSeq) {
-                    st.pSeq = item.msg.seq
-                  }
-                  if (st.p === item.msg) {
-                    st.p = undefined
-                  }
-                } else {
-                  if (st.sSeq === undefined || item.msg.seq > st.sSeq) {
-                    st.sSeq = item.msg.seq
-                  }
-                  if (st.s === item.msg) {
-                    st.s = undefined
+              const matched = capturedBatch!.messages.find(
+                (m) =>
+                  m.anchorId === item.msg.anchorId &&
+                  m.kind === item.msg.kind &&
+                  m.generation === item.msg.generation &&
+                  m.seq === item.msg.seq,
+              )
+              expect(matched).toBeDefined()
+            }
+
+            if (shouldFailSend) {
+              expect(flushed).toBe(false)
+              // On failure, pending messages remain in model to be retried
+            } else {
+              expect(flushed).toBe(true)
+              // On success, update model confirmed sequences and unset sent messages if identity matches
+              for (const item of expectedSnapshot) {
+                const st = modelAnchors[item.msg.anchorId as (typeof anchors)[number]]
+                if (st !== undefined && st.id === item.stateId) {
+                  if (item.msg.kind === 'placement') {
+                    if (st.pSeq === undefined || item.msg.seq > st.pSeq) {
+                      st.pSeq = item.msg.seq
+                    }
+                    if (st.p === item.msg) {
+                      st.p = undefined
+                    }
+                  } else {
+                    if (st.sSeq === undefined || item.msg.seq > st.sSeq) {
+                      st.sSeq = item.msg.seq
+                    }
+                    if (st.s === item.msg) {
+                      st.s = undefined
+                    }
                   }
                 }
               }
