@@ -214,11 +214,12 @@ if (decoded.ok) {
 - [机制说明](./docs/mechanism.md)：正向测量的触发条件、默认去重与 `dedupe: false`、可见性与 React 生命周期。
 - [双向几何设计](./docs/bidirectional-design.md)：内容尺寸反向调整占位元素时的单轴约束。
 - [通信协议](./docs/protocol.md)：消息格式、校验、排序和批处理。
+- [形式化验证](./specs/README.md)：使用 TLA+ 和 TLC 模型检验器对协议和批处理机制进行的严格形式化验证。
 - [性能报告](./docs/performance-report.md)：性能结论和导出体积。
 
 ## 参与贡献
 
-提交前运行 `pnpm lint`、`pnpm format:check`、`pnpm check-types`、`pnpm test`、`pnpm jit` 和 `pnpm build`。`pnpm benchmark` 用于更新性能报告。`pnpm jit` 检查 V8 是否仍会优化热路径。
+提交前运行 `pnpm lint`、`pnpm format:check`、`pnpm check-types`、`pnpm test`、`pnpm tla:check`、`pnpm jit` 和 `pnpm build`。`pnpm benchmark` 用于更新性能报告。`pnpm jit` 检查 V8 是否仍会优化热路径。
 
 ## 许可证
 
